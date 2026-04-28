@@ -1,0 +1,45 @@
+views.filter.search_api_range_filter:
+  type: views.filter.search_api
+  label: 'Search API Range Filter'
+  mapping:
+    value:
+      type: mapping
+      label: 'Filter values'
+      mapping:
+        from:
+          type: string
+          label: 'From value'
+        to:
+          type: string
+          label: 'To value'
+    start_field:
+      type: string
+      label: 'Start field'
+    end_field:
+      type: string
+      label: 'End field'
+    widget:
+      type: string
+      label: 'Widget type'
+    from_label:
+      type: label
+      label: '"From" label'
+    to_label:
+      type: label
+      label: '"To" label'
+    int_range:
+      type: mapping
+      label: 'Integer range configuration'
+      mapping:
+        min:
+          type: integer
+          label: 'Minimum value'
+        max:
+          type: integer
+          label: 'Maximum value'
+        use_current_year_min:
+          type: boolean
+          label: 'Use current year as minimum'
+        use_current_year_max:
+          type: boolean
+          label: 'Use current year as maximum'

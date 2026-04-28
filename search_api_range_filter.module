@@ -1,0 +1,41 @@
+<?php
+
+/**
+ * @file
+ * Hooks for the search_api_range_filter module.
+ */
+
+use Drupal\views\Plugin\views\filter\FilterPluginBase;
+
+
+/**
+ * Implements hook_views_filters_summary_info_alter().
+ */
+function search_api_range_filter_views_filters_summary_info_alter(array &$info, FilterPluginBase $filter): void {
+  if ($filter->getPluginId() !== 'search_api_range_filter') {
+    return;
+  }
+
+  $values = is_array($filter->value) ? $filter->value : [];
+  $from   = trim((string) ($values['from'] ?? ''));
+  $to     = trim((string) ($values['to']   ?? ''));
+
+  if ($from === '' && $to === '') {
+    $info['value'] = NULL;
+    return;
+  }
+
+  if ($from !== '' && $to !== '') {
+    $display = $from . ' – ' . $to;
+  } elseif ($from !== '') {
+    $display = '≥ ' . $from;
+  } else {
+    $display = '≤ ' . $to;
+  }
+
+  $info['value'] = [[
+    'id'    => 0,
+    'raw'   => $from . '|' . $to,
+    'value' => $display,
+  ]];
+}
