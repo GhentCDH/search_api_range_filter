@@ -3,6 +3,7 @@
   "description": "Search API Views filter for range-overlap queries across two index fields.",
   "type": "drupal-module",
   "license": "GPL-2.0-or-later",
+  "version": "1.0.0",
   "keywords": ["drupal", "search-api", "views", "filter", "range", "elasticsearch"],
   "require": {
     "drupal/core": "^10 || ^11",
