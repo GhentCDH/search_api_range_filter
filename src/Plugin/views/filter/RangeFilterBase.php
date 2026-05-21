@@ -114,10 +114,13 @@ abstract class RangeFilterBase extends FilterPluginBase {
       '#title'         => $this->t('Treat range as dates'),
       '#default_value' => $this->options['date_mode'] ?? FALSE,
       '#description'   => $this->t(
-        'When enabled, entered values are interpreted as dates and converted to the '
-        . 'format the backend expects. Date fields are handled automatically. '
-        . 'Integer fields are treated as storing year values and compared as integers. '
-        . 'When disabled, all values are compared as-is (numeric / raw).'
+        '<strong>Enabled:</strong> entered values are interpreted as dates and '
+        . 'expanded to period boundaries (e.g. year 1492 → 1492-01-01 … 1492-12-31). '
+        . 'Date fields are converted to the format the backend expects. '
+        . 'Integer fields are assumed to store <em>year values</em> and are compared as plain integers.'
+        . '<br><strong>Disabled:</strong> values are compared as-is. '
+        . 'If the selected fields are actual date fields, their raw storage values must be entered '
+        . '(e.g. Unix timestamps for search_api_db, ISO 8601 strings for Solr/Elasticsearch).'
       ),
     ];
 
@@ -205,7 +208,13 @@ abstract class RangeFilterBase extends FilterPluginBase {
           'select_range' => $this->t('Dropdown (consecutive integer range)'),
         ],
         '#default_value' => $this->options['widget'],
-        '#description'   => $this->t('Input widget shown to end users. Use <em>Dropdown</em> for numeric year ranges.'),
+        '#description'   => $this->t(
+        'Input widget shown to end users. '
+        . '<br><em>Text field:</em> free-form input; respects the "Treat range as dates" and granularity settings. '
+        . '<br><em>Dropdown:</em> consecutive integer year list. Always converts year integers to date boundaries '
+        . 'for date fields, regardless of the "Treat range as dates" setting. '
+        . 'Maximum range: 3000 entries (e.g. year 25–3025).'
+      ),
       ];
 
       $this->buildIntRangeSubForm($form['range_config'], $this->options['int_range']);
@@ -262,8 +271,9 @@ abstract class RangeFilterBase extends FilterPluginBase {
       '#title'         => $this->t('Auto-calculate range from data'),
       '#default_value' => $saved['use_auto_range'] ?? FALSE,
       '#description'   => $this->t(
-        'Automatically determine minimum and maximum values from the actual data. '
-        . 'Results are cached for one hour. Falls back to manual values if the data cannot be queried.'
+        'Automatically determine the minimum and maximum year from both the start and end fields. '
+        . 'Results are cached for one hour — run <code>drush cr</code> after changing fields to refresh. '
+        . 'Falls back to manual values if the range cannot be queried or exceeds 3000 entries.'
       ),
       '#states'        => $range_visible,
     ];
@@ -273,6 +283,7 @@ abstract class RangeFilterBase extends FilterPluginBase {
       '#title'         => $this->t('Minimum value'),
       '#default_value' => $saved['min'] ?? 1,
       '#size'          => 10,
+      '#description'   => $this->t('The difference between maximum and minimum may not exceed 3000.'),
       '#states'        => $min_state,
     ];
 
@@ -600,7 +611,7 @@ abstract class RangeFilterBase extends FilterPluginBase {
 
     // Guard against unconverted timestamps or other bad values slipping through:
     // a plausible year range is -9999 to 9999 and at most a few thousand steps.
-    if ($min < -9999 || $max > 9999 || ($max - $min) > 2000) {
+    if ($min < -9999 || $max > 9999 || ($max - $min) > 3000) {
       \Drupal::logger('views_range_filter')->warning(
         'Dropdown range @min–@max looks like unconverted timestamps; falling back to empty. Clear the Drupal data cache and check field type detection.',
         ['@min' => $min, '@max' => $max]
