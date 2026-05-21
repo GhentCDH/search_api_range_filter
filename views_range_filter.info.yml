@@ -1,0 +1,7 @@
+name: 'Views Range Filter'
+type: module
+description: 'Provides Views filters for range-overlap queries across two fields (e.g. date_start / date_end). Supports Search API (any backend) and regular SQL-backed Views.'
+package: 'Custom'
+core_version_requirement: ^10 || ^11
+dependencies:
+  - drupal:views

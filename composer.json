@@ -1,6 +1,6 @@
 {
-  "name": "drupal/search_api_range_filter",
-  "description": "Search API Views filter for range-overlap queries across two index fields.",
+  "name": "drupal/views_range_filter",
+  "description": "Views filter for range-overlap queries across two (index) fields.",
   "type": "drupal-module",
   "license": "GPL-2.0-or-later",
   "version": "1.0.0",

@@ -1,0 +1,103 @@
+views.filter.views_range_filter_sapi:
+  type: views.filter.search_api
+  label: 'Search API Range Filter'
+  mapping:
+    value:
+      type: mapping
+      label: 'Filter values'
+      mapping:
+        from:
+          type: string
+          label: 'From value'
+        to:
+          type: string
+          label: 'To value'
+    start_field:
+      type: string
+      label: 'Start field'
+    end_field:
+      type: string
+      label: 'End field'
+    single_field_mode:
+      type: boolean
+      label: 'Single field mode'
+    widget:
+      type: string
+      label: 'Widget type'
+    from_label:
+      type: label
+      label: '"From" label'
+    to_label:
+      type: label
+      label: '"To" label'
+    int_range:
+      type: mapping
+      label: 'Integer range configuration'
+      mapping:
+        use_auto_range:
+          type: boolean
+          label: 'Auto-calculate range from data'
+        min:
+          type: integer
+          label: 'Minimum value'
+        max:
+          type: integer
+          label: 'Maximum value'
+        use_current_year_min:
+          type: boolean
+          label: 'Use current year as minimum'
+        use_current_year_max:
+          type: boolean
+          label: 'Use current year as maximum'
+
+views.filter.views_range_filter_sql:
+  type: views.filter
+  label: 'SQL Range Filter'
+  mapping:
+    value:
+      type: mapping
+      label: 'Filter values'
+      mapping:
+        from:
+          type: string
+          label: 'From value'
+        to:
+          type: string
+          label: 'To value'
+    start_field:
+      type: string
+      label: 'Start field'
+    end_field:
+      type: string
+      label: 'End field'
+    single_field_mode:
+      type: boolean
+      label: 'Single field mode'
+    widget:
+      type: string
+      label: 'Widget type'
+    from_label:
+      type: label
+      label: '"From" label'
+    to_label:
+      type: label
+      label: '"To" label'
+    int_range:
+      type: mapping
+      label: 'Integer range configuration'
+      mapping:
+        use_auto_range:
+          type: boolean
+          label: 'Auto-calculate range from data'
+        min:
+          type: integer
+          label: 'Minimum value'
+        max:
+          type: integer
+          label: 'Maximum value'
+        use_current_year_min:
+          type: boolean
+          label: 'Use current year as minimum'
+        use_current_year_max:
+          type: boolean
+          label: 'Use current year as maximum'

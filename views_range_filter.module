@@ -2,7 +2,7 @@
 
 /**
  * @file
- * Hooks for the search_api_range_filter module.
+ * Hooks for the views_range_filter module.
  */
 
 use Drupal\views\Plugin\views\filter\FilterPluginBase;
@@ -11,8 +11,8 @@ use Drupal\views\Plugin\views\filter\FilterPluginBase;
 /**
  * Implements hook_views_filters_summary_info_alter().
  */
-function search_api_range_filter_views_filters_summary_info_alter(array &$info, FilterPluginBase $filter): void {
-  if ($filter->getPluginId() !== 'search_api_range_filter') {
+function views_range_filter_views_filters_summary_info_alter(array &$info, FilterPluginBase $filter): void {
+  if (!in_array($filter->getPluginId(), ['views_range_filter_sapi', 'views_range_filter_sql'], TRUE)) {
     return;
   }
 
