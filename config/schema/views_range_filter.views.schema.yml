@@ -21,9 +21,15 @@ views.filter.views_range_filter_sapi:
     single_field_mode:
       type: boolean
       label: 'Single field mode'
+    date_mode:
+      type: boolean
+      label: 'Treat range as dates'
     widget:
       type: string
       label: 'Widget type'
+    granularity:
+      type: string
+      label: 'Date granularity'
     from_label:
       type: label
       label: '"From" label'
@@ -73,9 +79,15 @@ views.filter.views_range_filter_sql:
     single_field_mode:
       type: boolean
       label: 'Single field mode'
+    date_mode:
+      type: boolean
+      label: 'Treat range as dates'
     widget:
       type: string
       label: 'Widget type'
+    granularity:
+      type: string
+      label: 'Date granularity'
     from_label:
       type: label
       label: '"From" label'

@@ -71,16 +71,10 @@ Clone or copy this repository into `web/modules/custom/views_range_filter/` and 
 
 ## Configuration
 
-### Search API filter
-
-1. Open a View backed by a Search API index.
-2. Click **Add** next to **Filter criteria** and select **Range filter (two Search API fields)** under the **Global** group.
-3. Configure the filter.
-
-### SQL filter
-
-1. Open a regular (SQL-backed) View.
-2. Click **Add** next to **Filter criteria** and select **Range filter (two SQL fields)** under the **Global** group.
+1. Open a View — either a Search API view or a regular SQL-backed view.
+2. Click **Add** next to **Filter criteria**. A **Range filter** entry appears under the view's base table group.
+   - In a Search API view the filter works against index fields.
+   - In a SQL view the filter works against database columns.
 3. Configure the filter.
 
 ### Filter options
@@ -90,23 +84,38 @@ Clone or copy this repository into `web/modules/custom/views_range_filter/` and 
 | Single field mode | Match records where one field falls within the range (no start/end pair). |
 | Start field | Field holding the beginning of the range (e.g. `date_start`). |
 | End field | Field holding the end of the range (e.g. `date_end`). Hidden in single-field mode. |
-| Widget type | `Text field` for free-form input, or `Dropdown` for a consecutive integer range. |
+| Treat range as dates | Enable date interpretation and boundary expansion — see below. |
+| Date granularity | (Date mode only) Precision of the user's input — see below. |
+| Widget type | (Exposed only) `Text field` for free-form input, or `Dropdown` for a consecutive integer range. |
 | From / To labels | Customizable labels for the exposed filter inputs. |
 | Auto-calculate range | (Dropdown only) Derive min/max from the actual data; cached 1 hour. |
 | Min / Max | (Dropdown only) Manual bounds, with optional "use current year" checkboxes. |
 
-### Date fields with the dropdown widget
+### Date mode and granularity
 
-When a **Search API** date field is combined with the dropdown widget, year integers are automatically converted to the correct boundary format for the active backend:
+**"Treat range as dates" disabled (default):** values are compared as-is — no conversion is applied. Use this for purely numeric fields (prices, counts, etc.) or when you want to enter raw backend-native values.
 
-| Backend | Storage format | Conversion |
-|---|---|---|
-| `search_api_db` | Unix timestamp | `mktime()` |
-| Elasticsearch / Solr / other | ISO 8601 string | `date('c', mktime(...))` |
+**"Treat range as dates" enabled:** the module converts each entered value to a period boundary according to the selected granularity, then adapts it to the format each field's backend expects.
 
-`>= year` resolves to Jan 1 at 00:00:00; `<= year` resolves to Dec 31 at 23:59:59.
+| Granularity | User enters | `>=` boundary | `<=` boundary |
+|---|---|---|---|
+| Year | `1492` | `1492-01-01 00:00:00` | `1492-12-31 23:59:59` |
+| Month | `1492-03` | `1492-03-01 00:00:00` | `1492-03-31 23:59:59` |
+| Day | `1492-03-15` | `1492-03-15 00:00:00` | `1492-03-15 23:59:59` |
+| Hour | `1492-03-15 14` | `1492-03-15 14:00:00` | `1492-03-15 14:59:59` |
+| Minute | `1492-03-15 14:30` | `1492-03-15 14:30:00` | `1492-03-15 14:30:59` |
+| Second | `1492-03-15 14:30:45` | `1492-03-15 14:30:45` | `1492-03-15 14:30:45` |
 
-For **SQL** date columns with the dropdown widget, supply the values in the format your column uses (Unix timestamps or plain year integers).
+The converted boundary is then formatted per field type:
+
+| Field type | Search API (search_api_db) | Search API (Solr / ES / other) | SQL |
+|---|---|---|---|
+| Date field | Unix timestamp (int) | UTC ISO 8601 string | `YYYY-MM-DD HH:MM:SS` string |
+| Integer field | Year as integer | Year as integer | Year as integer |
+
+**Integer fields in date mode** are assumed to store year values (e.g. `1492`, `2024`). The expanded year boundary integer is compared directly against the column — no timestamp conversion. This is the correct behaviour for fields that store a plain year number.
+
+The **Dropdown widget** always uses Year granularity regardless of the granularity setting, since it emits consecutive integer year values.
 
 ## License
 

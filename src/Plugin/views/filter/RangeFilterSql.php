@@ -25,7 +25,7 @@ class RangeFilterSql extends RangeFilterBase {
 
     $base_table       = $view->storage->get('base_table');
     $all_data         = Views::viewsData()->getAll();
-    $range_filter_ids = ['numeric', 'date'];
+    $range_filter_ids = ['numeric', 'date', 'datetime', 'daterange_filter'];
     $fields           = [];
 
     foreach ($all_data as $table_name => $table_data) {
@@ -52,9 +52,9 @@ class RangeFilterSql extends RangeFilterBase {
           continue;
         }
 
-        $label          = (string) ($field_data['title'] ?? $field_id);
-        $key            = $table_name . '::' . $field_id;
-        $fields[$key]   = $group . ': ' . $label . ' [' . $field_id . ']';
+        $label        = (string) ($field_data['title'] ?? $field_id);
+        $key          = $table_name . '::' . $field_id;
+        $fields[$key] = $group . ': ' . $label . ' [' . $field_id . ']';
       }
     }
 
@@ -106,7 +106,11 @@ class RangeFilterSql extends RangeFilterBase {
         return NULL;
       }
 
-      $result = ['min' => $row->min_val, 'max' => $row->max_val];
+      $result = [
+        'min'  => $row->min_val,
+        'max'  => $row->max_val,
+        'type' => $this->getFieldType($field_key),
+      ];
     }
     catch (\Exception $e) {
       \Drupal::logger('views_range_filter')->warning(
@@ -132,8 +136,17 @@ class RangeFilterSql extends RangeFilterBase {
   /**
    * {@inheritdoc}
    *
-   * Single-field mode: simple range on one column.
-   * Two-field mode: COALESCE overlap expressions.
+   * In date mode, each field receives a value converted according to its type:
+   *   - date-type fields get an SQL datetime string (YYYY-MM-DD HH:MM:SS)
+   *   - integer-type fields receive the year as a plain integer
+   *
+   * In numeric mode, values are compared as-is.
+   *
+   * Two-field overlap using explicit OR conditions (rather than COALESCE) so
+   * that each side of the OR can receive a separately converted value:
+   *   (end >= from_for_end OR (end IS NULL AND start >= from_for_start))
+   *   AND
+   *   (start <= to_for_start OR (start IS NULL AND end <= to_for_end))
    */
   public function query(): void {
     $start_key = $this->options['start_field'] ?? '';
@@ -144,39 +157,61 @@ class RangeFilterSql extends RangeFilterBase {
     }
 
     $values   = is_array($this->value) ? $this->value : [];
-    $from_val = $this->sanitizeRangeValue((string) ($values['from'] ?? ''));
-    $to_val   = $this->sanitizeRangeValue((string) ($values['to']   ?? ''));
+    $from_raw = $this->sanitizeRangeValue((string) ($values['from'] ?? ''));
+    $to_raw   = $this->sanitizeRangeValue((string) ($values['to']   ?? ''));
 
-    if ($from_val === '' && $to_val === '') {
+    if ($from_raw === '' && $to_raw === '') {
       return;
     }
 
-    // Unique placeholder suffix to avoid collisions with multiple filter instances.
+    $date_mode   = !empty($this->options['date_mode']);
+    $granularity = $this->effectiveGranularity();
+
+    // Converts a raw user value to the correct SQL format for one field.
+    $convert = function (string $raw, bool $is_lower, string $field_key)
+      use ($date_mode, $granularity): string {
+      if ($raw === '' || !$date_mode || $granularity === 'none') {
+        return $raw;
+      }
+      $dt = $this->parseGranularityBoundary($raw, $granularity, $is_lower);
+      if ($dt === NULL) {
+        return $raw;
+      }
+      // Date fields get an SQL datetime string; integer fields receive the year.
+      return $this->getFieldType($field_key) === 'date'
+        ? $this->dateTimeToSql($dt)
+        : (string) (int) $dt->format('Y');
+    };
+
+    // Compute per-field converted values for both directions.
+    $from_start = $convert($from_raw, TRUE,  $start_key);
+    $from_end   = $convert($from_raw, TRUE,  $end_key);
+    $to_start   = $convert($to_raw,   FALSE, $start_key);
+    $to_end     = $convert($to_raw,   FALSE, $end_key);
+
+    // Unique placeholder suffix to avoid collisions across multiple filter instances.
     static $counter = 0;
     $suffix = ++$counter;
 
-    // Single-field mode (or same field configured for both).
     $single_mode = !empty($this->options['single_field_mode']) || $start_key === $end_key;
 
     if ($single_mode) {
       if (!str_contains($start_key, '::')) {
         return;
       }
-
       [$start_table, $start_col] = explode('::', $start_key, 2);
       $alias = $this->query->ensureTable($start_table, $this->relationship);
       $expr  = "$alias.$start_col";
 
-      if ($from_val !== '') {
-        $this->query->addWhereExpression(0, "$expr >= :range_from_$suffix", [":range_from_$suffix" => $from_val]);
+      if ($from_start !== '') {
+        $this->query->addWhereExpression(0, "$expr >= :range_from_$suffix", [":range_from_$suffix" => $from_start]);
       }
-      if ($to_val !== '') {
-        $this->query->addWhereExpression(0, "$expr <= :range_to_$suffix",   [":range_to_$suffix"   => $to_val]);
+      if ($to_start !== '') {
+        $this->query->addWhereExpression(0, "$expr <= :range_to_$suffix", [":range_to_$suffix" => $to_start]);
       }
       return;
     }
 
-    // Two-field overlap mode.
     if (!str_contains($start_key, '::') || !str_contains($end_key, '::')) {
       return;
     }
@@ -184,29 +219,62 @@ class RangeFilterSql extends RangeFilterBase {
     [$start_table, $start_col] = explode('::', $start_key, 2);
     [$end_table,   $end_col]   = explode('::', $end_key,   2);
 
-    $start_alias = $this->query->ensureTable($start_table, $this->relationship);
-    $end_alias   = $this->query->ensureTable($end_table,   $this->relationship);
+    $sa = $this->query->ensureTable($start_table, $this->relationship);
+    $ea = $this->query->ensureTable($end_table,   $this->relationship);
 
-    $s = "$start_alias.$start_col";
-    $e = "$end_alias.$end_col";
+    $s = "$sa.$start_col";
+    $e = "$ea.$end_col";
 
-    if ($from_val !== '') {
-      // COALESCE(end, start) >= from
+    if ($from_raw !== '') {
+      // (end >= from_for_end) OR (end IS NULL AND start >= from_for_start)
       $this->query->addWhereExpression(
         0,
-        "COALESCE($e, $s) >= :range_from_$suffix",
-        [":range_from_$suffix" => $from_val]
+        "($e >= :from_e_$suffix OR ($e IS NULL AND $s >= :from_s_$suffix))",
+        [":from_e_$suffix" => $from_end, ":from_s_$suffix" => $from_start]
       );
     }
 
-    if ($to_val !== '') {
-      // COALESCE(start, end) <= to
+    if ($to_raw !== '') {
+      // (start <= to_for_start) OR (start IS NULL AND end <= to_for_end)
       $this->query->addWhereExpression(
         0,
-        "COALESCE($s, $e) <= :range_to_$suffix",
-        [":range_to_$suffix" => $to_val]
+        "($s <= :to_s_$suffix OR ($s IS NULL AND $e <= :to_e_$suffix))",
+        [":to_s_$suffix" => $to_start, ":to_e_$suffix" => $to_end]
       );
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Field type detection
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns 'date' when the field's registered Views filter is a date type,
+   * otherwise 'integer'. Used to drive per-field value conversion.
+   */
+  protected function getFieldType(string $field_key): string {
+    if (!str_contains($field_key, '::')) {
+      return 'integer';
+    }
+    [$table, $col] = explode('::', $field_key, 2);
+    $date_filter_ids = ['date', 'datetime', 'daterange_filter'];
+    $field_data = Views::viewsData()->get($table)[$col] ?? [];
+    $filter_id  = $field_data['filter']['id'] ?? '';
+    return in_array($filter_id, $date_filter_ids, TRUE) ? 'date' : 'integer';
+  }
+
+  // ---------------------------------------------------------------------------
+  // SQL date formatting
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Formats a DateTimeImmutable as a SQL-compatible datetime string.
+   *
+   * Years below 1000 are zero-padded to four digits (MySQL requires this for
+   * DATE and DATETIME columns).
+   */
+  protected function dateTimeToSql(\DateTimeImmutable $dt): string {
+    return $dt->format('Y-m-d H:i:s');
   }
 
 }

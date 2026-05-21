@@ -99,16 +99,14 @@ class RangeFilterSapi extends RangeFilterBase {
    * Uses two separate queries (sorted ASC and DESC, limited to 1 result)
    * so this works with any Search API backend.
    *
-   * @return array{min: mixed, max: mixed}|null
+   * @return array{min: mixed, max: mixed, type: string}|null
    */
   protected function queryMinMax(Index $index, string $field_id): ?array {
     $get_boundary = function (string $order) use ($index, $field_id): mixed {
       $query = $index->query();
       $query->range(0, 1);
       $query->sort($field_id, $order);
-      // Bypass entity access so the range reflects all indexed content.
       $query->setOption('search_api_bypass_access', TRUE);
-      // Ask the backend to return field values with results.
       $query->setOption('search_api_retrieved_field_values', [$field_id]);
 
       $results = $query->execute();
@@ -148,12 +146,16 @@ class RangeFilterSapi extends RangeFilterBase {
   /**
    * {@inheritdoc}
    *
-   * Single-field mode: field >= from AND field <= to (no COALESCE needed).
+   * In date mode, each field receives a value converted to its own format:
+   *   - date-type fields get a Unix timestamp (search_api_db) or ISO 8601 string
+   *   - integer-type fields receive the year as a plain integer
    *
-   * Two-field mode (overlap formula):
-   *   (end >= from  OR  (end IS NULL AND start >= from))
+   * In numeric mode, values are compared as-is.
+   *
+   * Two-field overlap formula (per field, with independent converted values):
+   *   (end >= from_for_end  OR  (end IS NULL AND start >= from_for_start))
    *   AND
-   *   (start <= to  OR  (start IS NULL AND end <= to))
+   *   (start <= to_for_start  OR  (start IS NULL AND end <= to_for_end))
    */
   public function query(): void {
     $query = $this->getQuery();
@@ -169,34 +171,47 @@ class RangeFilterSapi extends RangeFilterBase {
     }
 
     $values   = is_array($this->value) ? $this->value : [];
-    $from_val = $this->sanitizeRangeValue((string) ($values['from'] ?? ''));
-    $to_val   = $this->sanitizeRangeValue((string) ($values['to']   ?? ''));
+    $from_raw = $this->sanitizeRangeValue((string) ($values['from'] ?? ''));
+    $to_raw   = $this->sanitizeRangeValue((string) ($values['to']   ?? ''));
 
-    if ($from_val === '' && $to_val === '') {
+    if ($from_raw === '' && $to_raw === '') {
       return;
     }
 
-    // Backend-aware date conversion for date-type fields with the year dropdown.
-    $index = $this->getIndex();
-    if ($index instanceof Index) {
-      $field = $index->getField($start_field);
-      if ($field && $field->getType() === 'date') {
-        if ($from_val !== '' && is_numeric($from_val)) {
-          $from_val = $this->convertYearForBackend($index, (int) $from_val, '>=');
-        }
-        if ($to_val !== '' && is_numeric($to_val)) {
-          $to_val = $this->convertYearForBackend($index, (int) $to_val, '<=');
-        }
-      }
-    }
+    $date_mode   = !empty($this->options['date_mode']);
+    $granularity = $this->effectiveGranularity();
+    $index       = $this->getIndex();
 
-    // Single-field mode: straightforward range on one field.
-    if (!empty($this->options['single_field_mode']) || $start_field === $end_field) {
-      if ($from_val !== '') {
-        $query->addCondition($start_field, $from_val, '>=');
+    // Converts a raw user value to the correct backend format for one field.
+    $convert = function (string $raw, bool $is_lower, string $field_id)
+      use ($date_mode, $granularity, $index): string {
+      if ($raw === '' || !$date_mode || $granularity === 'none' || !$index instanceof Index) {
+        return $raw;
       }
-      if ($to_val !== '') {
-        $query->addCondition($start_field, $to_val, '<=');
+      $dt = $this->parseGranularityBoundary($raw, $granularity, $is_lower);
+      if ($dt === NULL) {
+        return $raw;
+      }
+      $field = $index->getField($field_id);
+      // Date fields get a backend-native value; integer fields receive the year.
+      return (string) ($field && $field->getType() === 'date'
+        ? $this->dateTimeToBackend($index, $dt)
+        : (int) $dt->format('Y'));
+    };
+
+    // Compute per-field converted values for both directions.
+    $from_start = $convert($from_raw, TRUE,  $start_field);
+    $from_end   = $convert($from_raw, TRUE,  $end_field);
+    $to_start   = $convert($to_raw,   FALSE, $start_field);
+    $to_end     = $convert($to_raw,   FALSE, $end_field);
+
+    // Single-field mode.
+    if (!empty($this->options['single_field_mode']) || $start_field === $end_field) {
+      if ($from_start !== '') {
+        $query->addCondition($start_field, $from_start, '>=');
+      }
+      if ($to_start !== '') {
+        $query->addCondition($start_field, $to_start, '<=');
       }
       return;
     }
@@ -204,25 +219,25 @@ class RangeFilterSapi extends RangeFilterBase {
     // Two-field overlap mode.
     $overlap = $query->createConditionGroup('AND');
 
-    if ($from_val !== '') {
+    if ($from_raw !== '') {
       $from_or = $query->createConditionGroup('OR');
-      $from_or->addCondition($end_field, $from_val, '>=');
+      $from_or->addCondition($end_field, $from_end, '>=');
 
       $end_missing = $query->createConditionGroup('AND');
       $end_missing->addCondition($end_field, NULL, '=');
-      $end_missing->addCondition($start_field, $from_val, '>=');
+      $end_missing->addCondition($start_field, $from_start, '>=');
       $from_or->addConditionGroup($end_missing);
 
       $overlap->addConditionGroup($from_or);
     }
 
-    if ($to_val !== '') {
+    if ($to_raw !== '') {
       $to_or = $query->createConditionGroup('OR');
-      $to_or->addCondition($start_field, $to_val, '<=');
+      $to_or->addCondition($start_field, $to_start, '<=');
 
       $start_missing = $query->createConditionGroup('AND');
       $start_missing->addCondition($start_field, NULL, '=');
-      $start_missing->addCondition($end_field, $to_val, '<=');
+      $start_missing->addCondition($end_field, $to_end, '<=');
       $to_or->addConditionGroup($start_missing);
 
       $overlap->addConditionGroup($to_or);
@@ -236,37 +251,22 @@ class RangeFilterSapi extends RangeFilterBase {
   // ---------------------------------------------------------------------------
 
   /**
-   * Converts a plain year integer to the correct value for the active backend.
+   * Converts a DateTimeImmutable boundary to the format the active backend expects.
    *
-   * | Backend          | Storage format      | Returns         |
-   * |------------------|---------------------|-----------------|
-   * | search_api_db    | Unix timestamp      | int             |
-   * | Elasticsearch    | ISO 8601 string     | string          |
-   * | Solr             | ISO 8601 string     | string          |
-   * | unknown          | ISO 8601 string     | string          |
+   * search_api_db stores dates as Unix timestamps (integers).
+   * All other backends (Solr, Elasticsearch, …) receive UTC ISO 8601 strings.
    */
-  protected function convertYearForBackend(Index $index, int $year, string $operator): int|string {
-    $backend_id = '';
-
+  protected function dateTimeToBackend(Index $index, \DateTimeImmutable $dt): int|string {
     try {
       $backend_id = $index->getServerInstance()->getBackendId();
     }
     catch (\Exception $e) {
-      // Server unreachable; fall through to ISO 8601.
+      $backend_id = '';
     }
 
-    $is_lower = in_array($operator, ['>=', '>'], TRUE);
-
-    if ($backend_id === 'search_api_db') {
-      return $is_lower
-        ? mktime(0, 0, 0, 1, 1, $year)
-        : mktime(23, 59, 59, 12, 31, $year);
-    }
-
-    // Elasticsearch, Solr, unknown: ISO 8601.
-    return $is_lower
-      ? date('c', mktime(0, 0, 0, 1, 1, $year))
-      : date('c', mktime(23, 59, 59, 12, 31, $year));
+    return $backend_id === 'search_api_db'
+      ? $dt->getTimestamp()
+      : $dt->format('c');
   }
 
 }
