@@ -1,0 +1,8 @@
+name: 'Views Range Filter Widgets'
+type: module
+description: 'Provides a BEF dropdown widget for the Views Range Filter module.'
+core_version_requirement: ^10 || ^11
+package: Views
+dependencies:
+  - views_range_filter:views_range_filter
+  - better_exposed_filters:better_exposed_filters

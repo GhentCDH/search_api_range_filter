@@ -63,7 +63,7 @@ abstract class RangeFilterSapi extends RangeFilterBase {
    * Results are cached for one hour, tagged with the index cache tags so they
    * invalidate automatically when the index is updated.
    */
-  protected function resolveAutoMinMax(string $field_id): ?array {
+  public function resolveAutoMinMax(string $field_id): ?array {
     $index = $this->getIndex();
     if (!$index instanceof Index || !$field_id) {
       return NULL;
@@ -152,16 +152,17 @@ abstract class RangeFilterSapi extends RangeFilterBase {
   /**
    * {@inheritdoc}
    *
-   * In date mode, each field receives a value converted to its own format:
-   *   - date-type fields get a Unix timestamp (search_api_db) or ISO 8601 string
-   *   - integer-type fields receive the year as a plain integer
+   * In date mode, values are parsed via strtotime() and then converted to the
+   * backend-native format for each field:
+   *   - search_api_db:      Unix timestamp integer
+   *   - other backends:     UTC ISO 8601 string
    *
-   * In numeric mode, values are compared as-is.
+   * In integer mode, raw numeric values are used directly.
    *
-   * Two-field overlap formula (per field, with independent converted values):
-   *   (end >= from_for_end  OR  (end IS NULL AND start >= from_for_start))
+   * Two-field overlap formula:
+   *   (end >= min_for_end  OR  (end IS NULL AND start >= min_for_start))
    *   AND
-   *   (start <= to_for_start  OR  (start IS NULL AND end <= to_for_end))
+   *   (start <= max_for_start  OR  (start IS NULL AND end <= max_for_end))
    */
   public function query(): void {
     $query = $this->getQuery();
@@ -176,47 +177,74 @@ abstract class RangeFilterSapi extends RangeFilterBase {
       return;
     }
 
-    $values   = is_array($this->value) ? $this->value : [];
-    $from_raw = $this->sanitizeRangeValue((string) ($values['from'] ?? ''));
-    $to_raw   = $this->sanitizeRangeValue((string) ($values['to']   ?? ''));
+    $values  = is_array($this->value) ? $this->value : [];
+    $min_raw = $this->sanitizeRangeValue((string) ($values['min'] ?? ''));
+    $max_raw = $this->sanitizeRangeValue((string) ($values['max'] ?? ''));
 
-    if ($from_raw === '' && $to_raw === '') {
+    if ($min_raw === '' && $max_raw === '') {
       return;
     }
 
-    $granularity = $this->effectiveGranularity();
-    $index       = $this->getIndex();
+    // Integer mode: use raw values directly.
+    if ($this->mode !== 'date') {
+      $this->applyConditions($query, $start_field, $end_field, $min_raw, $min_raw, $max_raw, $max_raw);
+      return;
+    }
 
-    // Converts a raw user value to the correct backend format for one field.
-    $convert = function (string $raw, bool $is_lower, string $field_id)
-      use ($granularity, $index): string {
-      if ($raw === '' || $granularity === 'none' || !$index instanceof Index) {
-        return $raw;
+    // Date mode: parse via strtotime().
+    $value_type = $values['type'] ?? 'date';
+    $index      = $this->getIndex();
+
+    $tsMin = NULL;
+    $tsMax = NULL;
+
+    if ($min_raw !== '') {
+      if ($value_type === 'offset') {
+        $tsMin = time() + (int) strtotime($min_raw, 0);
       }
-      $dt = $this->parseGranularityBoundary($raw, $granularity, $is_lower);
-      if ($dt === NULL) {
-        return $raw;
+      else {
+        $ts = strtotime($min_raw);
+        $tsMin = ($ts !== FALSE) ? $ts : NULL;
       }
-      $field = $index->getField($field_id);
-      // Date fields get a backend-native value; integer fields receive the year.
-      return (string) ($field && $field->getType() === 'date'
-        ? $this->dateTimeToBackend($index, $dt)
-        : (int) $dt->format('Y'));
-    };
+    }
 
-    // Compute per-field converted values for both directions.
-    $from_start = $convert($from_raw, TRUE,  $start_field);
-    $from_end   = $convert($from_raw, TRUE,  $end_field);
-    $to_start   = $convert($to_raw,   FALSE, $start_field);
-    $to_end     = $convert($to_raw,   FALSE, $end_field);
+    if ($max_raw !== '') {
+      if ($value_type === 'offset') {
+        $tsMax = time() + (int) strtotime($max_raw, 0);
+      }
+      else {
+        $ts = strtotime($max_raw);
+        $tsMax = ($ts !== FALSE) ? $ts : NULL;
+      }
+    }
 
+    $min_start = $tsMin !== NULL ? (string) $this->tsToBackend($index, $tsMin) : '';
+    $min_end   = $tsMin !== NULL ? (string) $this->tsToBackend($index, $tsMin) : '';
+    $max_start = $tsMax !== NULL ? (string) $this->tsToBackend($index, $tsMax) : '';
+    $max_end   = $tsMax !== NULL ? (string) $this->tsToBackend($index, $tsMax) : '';
+
+    $this->applyConditions($query, $start_field, $end_field, $min_start, $min_end, $max_start, $max_end);
+  }
+
+  /**
+   * Applies range-overlap conditions to the Search API query.
+   */
+  protected function applyConditions(
+    SearchApiQuery $query,
+    string $start_field,
+    string $end_field,
+    string $min_start,
+    string $min_end,
+    string $max_start,
+    string $max_end
+  ): void {
     // Single-field mode.
     if ($start_field === $end_field) {
-      if ($from_start !== '') {
-        $query->addCondition($start_field, $from_start, '>=');
+      if ($min_start !== '') {
+        $query->addCondition($start_field, $min_start, '>=');
       }
-      if ($to_start !== '') {
-        $query->addCondition($start_field, $to_start, '<=');
+      if ($max_start !== '') {
+        $query->addCondition($start_field, $max_start, '<=');
       }
       return;
     }
@@ -224,25 +252,31 @@ abstract class RangeFilterSapi extends RangeFilterBase {
     // Two-field overlap mode.
     $overlap = $query->createConditionGroup('AND');
 
-    if ($from_raw !== '') {
+    if ($min_start !== '' || $min_end !== '') {
+      $min_e = $min_end   !== '' ? $min_end   : $min_start;
+      $min_s = $min_start !== '' ? $min_start : $min_end;
+
       $from_or = $query->createConditionGroup('OR');
-      $from_or->addCondition($end_field, $from_end, '>=');
+      $from_or->addCondition($end_field, $min_e, '>=');
 
       $end_missing = $query->createConditionGroup('AND');
       $end_missing->addCondition($end_field, NULL, '=');
-      $end_missing->addCondition($start_field, $from_start, '>=');
+      $end_missing->addCondition($start_field, $min_s, '>=');
       $from_or->addConditionGroup($end_missing);
 
       $overlap->addConditionGroup($from_or);
     }
 
-    if ($to_raw !== '') {
+    if ($max_start !== '' || $max_end !== '') {
+      $max_s = $max_start !== '' ? $max_start : $max_end;
+      $max_e = $max_end   !== '' ? $max_end   : $max_start;
+
       $to_or = $query->createConditionGroup('OR');
-      $to_or->addCondition($start_field, $to_start, '<=');
+      $to_or->addCondition($start_field, $max_s, '<=');
 
       $start_missing = $query->createConditionGroup('AND');
       $start_missing->addCondition($start_field, NULL, '=');
-      $start_missing->addCondition($end_field, $to_end, '<=');
+      $start_missing->addCondition($end_field, $max_e, '<=');
       $to_or->addConditionGroup($start_missing);
 
       $overlap->addConditionGroup($to_or);
@@ -256,12 +290,16 @@ abstract class RangeFilterSapi extends RangeFilterBase {
   // ---------------------------------------------------------------------------
 
   /**
-   * Converts a DateTimeImmutable boundary to the format the active backend expects.
+   * Converts a Unix timestamp to the format the active backend expects.
    *
    * search_api_db stores dates as Unix timestamps (integers).
    * All other backends (Solr, Elasticsearch, …) receive UTC ISO 8601 strings.
    */
-  protected function dateTimeToBackend(Index $index, \DateTimeImmutable $dt): int|string {
+  protected function tsToBackend(?Index $index, int $ts): int|string {
+    if (!$index instanceof Index) {
+      return $ts;
+    }
+
     try {
       $backend_id = $index->getServerInstance()->getBackendId();
     }
@@ -270,8 +308,8 @@ abstract class RangeFilterSapi extends RangeFilterBase {
     }
 
     return $backend_id === 'search_api_db'
-      ? $dt->getTimestamp()
-      : $dt->format('c');
+      ? $ts
+      : (new \DateTimeImmutable('@' . $ts))->format('c');
   }
 
 }

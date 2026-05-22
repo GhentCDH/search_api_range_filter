@@ -11,4 +11,11 @@ class RangeFilterSqlDate extends RangeFilterSql {
 
   protected string $mode = 'date';
 
+  /**
+   * Marks this filter as a date handler so that BEF DatePickers can detect it.
+   *
+   * @var mixed
+   */
+  public mixed $date_handler = TRUE;
+
 }

@@ -96,7 +96,7 @@ abstract class RangeFilterSql extends RangeFilterBase {
    *
    * Runs a single SELECT MIN(col), MAX(col) query. Cached for one hour.
    */
-  protected function resolveAutoMinMax(string $field_key): ?array {
+  public function resolveAutoMinMax(string $field_key): ?array {
     if (!str_contains($field_key, '::')) {
       return NULL;
     }
@@ -150,17 +150,18 @@ abstract class RangeFilterSql extends RangeFilterBase {
   /**
    * {@inheritdoc}
    *
-   * In date mode, each field receives a value converted according to its type:
-   *   - date-type fields get an SQL datetime string (YYYY-MM-DD HH:MM:SS)
-   *   - integer-type fields receive the year as a plain integer
+   * In date mode, values are parsed via strtotime() and then formatted
+   * according to each field's storage type:
+   *   - 'timestamp': raw Unix timestamp integer
+   *   - 'datetime':  SQL datetime string (YYYY-MM-DD HH:MM:SS)
+   *   - 'integer':   year as plain integer
    *
-   * In numeric mode, values are compared as-is.
+   * In integer mode, raw numeric values are used directly.
    *
-   * Two-field overlap using explicit OR conditions (rather than COALESCE) so
-   * that each side of the OR can receive a separately converted value:
-   *   (end >= from_for_end OR (end IS NULL AND start >= from_for_start))
+   * Two-field overlap using explicit OR conditions:
+   *   (end >= min_for_end OR (end IS NULL AND start >= min_for_start))
    *   AND
-   *   (start <= to_for_start OR (start IS NULL AND end <= to_for_end))
+   *   (start <= max_for_start OR (start IS NULL AND end <= max_for_end))
    */
   public function query(): void {
     $start_key = $this->options['start_field'] ?? '';
@@ -170,39 +171,77 @@ abstract class RangeFilterSql extends RangeFilterBase {
       return;
     }
 
-    $values   = is_array($this->value) ? $this->value : [];
-    $from_raw = $this->sanitizeRangeValue((string) ($values['from'] ?? ''));
-    $to_raw   = $this->sanitizeRangeValue((string) ($values['to']   ?? ''));
+    $values  = is_array($this->value) ? $this->value : [];
+    $min_raw = $this->sanitizeRangeValue((string) ($values['min'] ?? ''));
+    $max_raw = $this->sanitizeRangeValue((string) ($values['max'] ?? ''));
 
-    if ($from_raw === '' && $to_raw === '') {
+    if ($min_raw === '' && $max_raw === '') {
       return;
     }
 
-    $granularity = $this->effectiveGranularity();
+    // For integer mode: use raw values directly without any date conversion.
+    if ($this->mode !== 'date') {
+      $this->applyConditions($start_key, $end_key, $min_raw, $min_raw, $max_raw, $max_raw);
+      return;
+    }
 
-    // Converts a raw user value to the correct SQL format for one field.
-    $convert = function (string $raw, bool $is_lower, string $field_key)
-      use ($granularity): string {
-      if ($raw === '' || $granularity === 'none') {
-        return $raw;
+    // Date mode: parse via strtotime() and convert per field type.
+    $value_type = $values['type'] ?? 'date';
+
+    $tsMin = NULL;
+    $tsMax = NULL;
+
+    if ($min_raw !== '') {
+      if ($value_type === 'offset') {
+        $tsMin = time() + (int) strtotime($min_raw, 0);
       }
-      $dt = $this->parseGranularityBoundary($raw, $granularity, $is_lower);
-      if ($dt === NULL) {
-        return $raw;
+      else {
+        $ts = strtotime($min_raw);
+        $tsMin = ($ts !== FALSE) ? $ts : NULL;
       }
-      // Date fields get an SQL datetime string; integer fields receive the year.
-      return $this->getFieldType($field_key) === 'date'
-        ? $this->dateTimeToSql($dt)
-        : (string) (int) $dt->format('Y');
+    }
+
+    if ($max_raw !== '') {
+      if ($value_type === 'offset') {
+        $tsMax = time() + (int) strtotime($max_raw, 0);
+      }
+      else {
+        $ts = strtotime($max_raw);
+        $tsMax = ($ts !== FALSE) ? $ts : NULL;
+      }
+    }
+
+    $min_start = $tsMin !== NULL ? $this->tsToSqlValue($tsMin, $start_key) : '';
+    $min_end   = $tsMin !== NULL ? $this->tsToSqlValue($tsMin, $end_key)   : '';
+    $max_start = $tsMax !== NULL ? $this->tsToSqlValue($tsMax, $start_key) : '';
+    $max_end   = $tsMax !== NULL ? $this->tsToSqlValue($tsMax, $end_key)   : '';
+
+    $this->applyConditions($start_key, $end_key, $min_start, $min_end, $max_start, $max_end);
+  }
+
+  /**
+   * Converts a Unix timestamp to the appropriate SQL value for a given field.
+   */
+  protected function tsToSqlValue(int $ts, string $field_key): string {
+    $type = $this->getFieldType($field_key);
+    return match ($type) {
+      'timestamp' => (string) $ts,
+      'datetime'  => date('Y-m-d H:i:s', $ts),
+      default     => (string) (int) date('Y', $ts),
     };
+  }
 
-    // Compute per-field converted values for both directions.
-    $from_start = $convert($from_raw, TRUE,  $start_key);
-    $from_end   = $convert($from_raw, TRUE,  $end_key);
-    $to_start   = $convert($to_raw,   FALSE, $start_key);
-    $to_end     = $convert($to_raw,   FALSE, $end_key);
-
-    // Unique placeholder suffix to avoid collisions across multiple filter instances.
+  /**
+   * Applies the range-overlap WHERE conditions to the query.
+   */
+  protected function applyConditions(
+    string $start_key,
+    string $end_key,
+    string $min_start,
+    string $min_end,
+    string $max_start,
+    string $max_end
+  ): void {
     static $counter = 0;
     $suffix = ++$counter;
 
@@ -216,11 +255,11 @@ abstract class RangeFilterSql extends RangeFilterBase {
       $alias = $this->query->ensureTable($start_table, $this->relationship);
       $expr  = "$alias.$start_col";
 
-      if ($from_start !== '') {
-        $this->query->addWhereExpression(0, "$expr >= :range_from_$suffix", [":range_from_$suffix" => $from_start]);
+      if ($min_start !== '') {
+        $this->query->addWhereExpression(0, "$expr >= :range_min_$suffix", [":range_min_$suffix" => $min_start]);
       }
-      if ($to_start !== '') {
-        $this->query->addWhereExpression(0, "$expr <= :range_to_$suffix", [":range_to_$suffix" => $to_start]);
+      if ($max_start !== '') {
+        $this->query->addWhereExpression(0, "$expr <= :range_max_$suffix", [":range_max_$suffix" => $max_start]);
       }
       return;
     }
@@ -238,21 +277,25 @@ abstract class RangeFilterSql extends RangeFilterBase {
     $s = "$sa.$start_col";
     $e = "$ea.$end_col";
 
-    if ($from_raw !== '') {
-      // (end >= from_for_end) OR (end IS NULL AND start >= from_for_start)
+    if ($min_start !== '' || $min_end !== '') {
+      $min_e = $min_end   !== '' ? $min_end   : $min_start;
+      $min_s = $min_start !== '' ? $min_start : $min_end;
+      // (end >= min_for_end) OR (end IS NULL AND start >= min_for_start)
       $this->query->addWhereExpression(
         0,
-        "($e >= :from_e_$suffix OR ($e IS NULL AND $s >= :from_s_$suffix))",
-        [":from_e_$suffix" => $from_end, ":from_s_$suffix" => $from_start]
+        "($e >= :min_e_$suffix OR ($e IS NULL AND $s >= :min_s_$suffix))",
+        [":min_e_$suffix" => $min_e, ":min_s_$suffix" => $min_s]
       );
     }
 
-    if ($to_raw !== '') {
-      // (start <= to_for_start) OR (start IS NULL AND end <= to_for_end)
+    if ($max_start !== '' || $max_end !== '') {
+      $max_s = $max_start !== '' ? $max_start : $max_end;
+      $max_e = $max_end   !== '' ? $max_end   : $max_start;
+      // (start <= max_for_start) OR (start IS NULL AND end <= max_for_end)
       $this->query->addWhereExpression(
         0,
-        "($s <= :to_s_$suffix OR ($s IS NULL AND $e <= :to_e_$suffix))",
-        [":to_s_$suffix" => $to_start, ":to_e_$suffix" => $to_end]
+        "($s <= :max_s_$suffix OR ($s IS NULL AND $e <= :max_e_$suffix))",
+        [":max_s_$suffix" => $max_s, ":max_e_$suffix" => $max_e]
       );
     }
   }
@@ -262,30 +305,54 @@ abstract class RangeFilterSql extends RangeFilterBase {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns 'date' if the field uses a date filter plugin, otherwise 'integer'.
+   * Returns 'timestamp', 'datetime', or 'integer' for the given field key.
+   *
+   *   - 'timestamp': filter plugin is exactly 'date' (core timestamp fields).
+   *   - 'datetime':  filter plugin extends core Date but is not 'date' itself,
+   *                  OR entity storage type is 'datetime'/'daterange'.
+   *   - 'integer':   everything else (year-like integers, plain numerics).
    */
   protected function getFieldType(string $field_key): string {
     if (!str_contains($field_key, '::')) {
       return 'integer';
     }
+
     [$table, $col] = explode('::', $field_key, 2);
-    $field_data = Views::viewsData()->get($table)[$col] ?? [];
-    return $this->isDateField($field_data, $table, $col) ? 'date' : 'integer';
+    $field_data    = Views::viewsData()->get($table)[$col] ?? [];
+    $filter_id     = $field_data['filter']['id'] ?? '';
+
+    // Exact 'date' filter plugin → timestamp storage.
+    if ($filter_id === 'date') {
+      return 'timestamp';
+    }
+
+    // Check whether the filter plugin extends core Date (but is not 'date').
+    if ($filter_id) {
+      try {
+        $def = \Drupal::service('plugin.manager.views.filter')
+          ->getDefinition($filter_id, FALSE);
+        if ($def) {
+          $base = 'Drupal\views\Plugin\views\filter\Date';
+          if (class_exists($base) && is_a($def['class'], $base, TRUE)) {
+            return 'datetime';
+          }
+        }
+      }
+      catch (\Throwable $e) {}
+    }
+
+    // Entity storage type check.
+    $entity_type = $this->getEntityFieldStorageType($table, $col);
+    if (in_array($entity_type, ['datetime', 'daterange'], TRUE)) {
+      return 'datetime';
+    }
+    if ($entity_type === 'timestamp') {
+      return 'timestamp';
+    }
+
+    return 'integer';
   }
 
-  /**
-   * Returns TRUE when the field uses a date filter plugin.
-   *
-   * Uses the filter plugin class hierarchy: \Drupal\datetime\Plugin\views\filter\Date
-   * and \Drupal\datetime_range\Plugin\views\filter\DateRange both extend the
-   * core \Drupal\views\Plugin\views\filter\Date, so any contrib plugin that
-   * also extends it is automatically included. Falls back to a known-ID check
-   * if the class lookup fails.
-   *
-   * Note: entity fields use a generic field display plugin regardless of type,
-   * so checking the field plugin class does not work — the filter plugin is the
-   * authoritative indicator of date vs. numeric behaviour.
-   */
   /**
    * Returns the Drupal field storage type for entity attachment table columns.
    *
@@ -314,7 +381,7 @@ abstract class RangeFilterSql extends RangeFilterBase {
         ->getFieldStorageDefinitions($entity_type_id);
       return ($definitions[$field_name] ?? NULL)?->getType();
     }
-    catch (\Exception $e) {
+    catch (\Throwable $e) {
       return NULL;
     }
   }
@@ -337,7 +404,7 @@ abstract class RangeFilterSql extends RangeFilterBase {
           }
         }
       }
-      catch (\Exception $e) {}
+      catch (\Throwable $e) {}
     }
 
     // Check field plugin class hierarchy.
@@ -353,7 +420,7 @@ abstract class RangeFilterSql extends RangeFilterBase {
           }
         }
       }
-      catch (\Exception $e) {}
+      catch (\Throwable $e) {}
     }
 
     // For entity attachment tables, check the actual Drupal field storage type.
@@ -366,20 +433,6 @@ abstract class RangeFilterSql extends RangeFilterBase {
     // Fallback to known IDs when plugin managers are unavailable.
     return in_array($filter_id, ['date', 'datetime', 'daterange_filter'], TRUE)
       || in_array($field_id, ['date', 'datetime'], TRUE);
-  }
-
-  // ---------------------------------------------------------------------------
-  // SQL date formatting
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Formats a DateTimeImmutable as a SQL-compatible datetime string.
-   *
-   * Years below 1000 are zero-padded to four digits (MySQL requires this for
-   * DATE and DATETIME columns).
-   */
-  protected function dateTimeToSql(\DateTimeImmutable $dt): string {
-    return $dt->format('Y-m-d H:i:s');
   }
 
 }
