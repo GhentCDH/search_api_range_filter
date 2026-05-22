@@ -1,6 +1,6 @@
-views.filter.views_range_filter_sapi:
+views.filter.views_range_filter_sapi_date:
   type: views.filter.search_api
-  label: 'Search API Range Filter'
+  label: 'Search API Date Range Filter'
   mapping:
     value:
       type: mapping
@@ -18,12 +18,6 @@ views.filter.views_range_filter_sapi:
     end_field:
       type: string
       label: 'End field'
-    single_field_mode:
-      type: boolean
-      label: 'Single field mode'
-    date_mode:
-      type: boolean
-      label: 'Treat range as dates'
     widget:
       type: string
       label: 'Widget type'
@@ -56,9 +50,9 @@ views.filter.views_range_filter_sapi:
           type: boolean
           label: 'Use current year as maximum'
 
-views.filter.views_range_filter_sql:
-  type: views.filter
-  label: 'SQL Range Filter'
+views.filter.views_range_filter_sapi_int:
+  type: views.filter.search_api
+  label: 'Search API Numeric Range Filter'
   mapping:
     value:
       type: mapping
@@ -76,18 +70,110 @@ views.filter.views_range_filter_sql:
     end_field:
       type: string
       label: 'End field'
-    single_field_mode:
-      type: boolean
-      label: 'Single field mode'
-    date_mode:
-      type: boolean
-      label: 'Treat range as dates'
+    widget:
+      type: string
+      label: 'Widget type'
+    from_label:
+      type: label
+      label: '"From" label'
+    to_label:
+      type: label
+      label: '"To" label'
+    int_range:
+      type: mapping
+      label: 'Integer range configuration'
+      mapping:
+        use_auto_range:
+          type: boolean
+          label: 'Auto-calculate range from data'
+        min:
+          type: integer
+          label: 'Minimum value'
+        max:
+          type: integer
+          label: 'Maximum value'
+        use_current_year_min:
+          type: boolean
+          label: 'Use current year as minimum'
+        use_current_year_max:
+          type: boolean
+          label: 'Use current year as maximum'
+
+views.filter.views_range_filter_sql_date:
+  type: views.filter
+  label: 'SQL Date Range Filter'
+  mapping:
+    value:
+      type: mapping
+      label: 'Filter values'
+      mapping:
+        from:
+          type: string
+          label: 'From value'
+        to:
+          type: string
+          label: 'To value'
+    start_field:
+      type: string
+      label: 'Start field'
+    end_field:
+      type: string
+      label: 'End field'
     widget:
       type: string
       label: 'Widget type'
     granularity:
       type: string
       label: 'Date granularity'
+    from_label:
+      type: label
+      label: '"From" label'
+    to_label:
+      type: label
+      label: '"To" label'
+    int_range:
+      type: mapping
+      label: 'Integer range configuration'
+      mapping:
+        use_auto_range:
+          type: boolean
+          label: 'Auto-calculate range from data'
+        min:
+          type: integer
+          label: 'Minimum value'
+        max:
+          type: integer
+          label: 'Maximum value'
+        use_current_year_min:
+          type: boolean
+          label: 'Use current year as minimum'
+        use_current_year_max:
+          type: boolean
+          label: 'Use current year as maximum'
+
+views.filter.views_range_filter_sql_int:
+  type: views.filter
+  label: 'SQL Numeric Range Filter'
+  mapping:
+    value:
+      type: mapping
+      label: 'Filter values'
+      mapping:
+        from:
+          type: string
+          label: 'From value'
+        to:
+          type: string
+          label: 'To value'
+    start_field:
+      type: string
+      label: 'Start field'
+    end_field:
+      type: string
+      label: 'End field'
+    widget:
+      type: string
+      label: 'Widget type'
     from_label:
       type: label
       label: '"From" label'

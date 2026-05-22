@@ -5,13 +5,11 @@ namespace Drupal\views_range_filter\Plugin\views\filter;
 use Drupal\views\Views;
 
 /**
- * Views filter for range-overlap queries on regular SQL-backed Views.
+ * Abstract SQL Views filter for range-overlap queries.
  *
  * Field keys are stored as "table_name::column_name" internally.
- *
- * @ViewsFilter("views_range_filter_sql")
  */
-class RangeFilterSql extends RangeFilterBase {
+abstract class RangeFilterSql extends RangeFilterBase {
 
   // ---------------------------------------------------------------------------
   // Field options
@@ -23,10 +21,14 @@ class RangeFilterSql extends RangeFilterBase {
       return [];
     }
 
-    $base_table       = $view->storage->get('base_table');
-    $all_data         = Views::viewsData()->getAll();
-    $range_filter_ids = ['numeric', 'date', 'datetime', 'daterange_filter'];
-    $fields           = [];
+    $base_table = $view->storage->get('base_table');
+    $all_data   = Views::viewsData()->getAll();
+
+    $range_filter_ids = $this->mode === 'date'
+      ? ['date', 'datetime', 'daterange_filter']
+      : ['numeric'];
+
+    $fields = [];
 
     foreach ($all_data as $table_name => $table_data) {
       if (!is_array($table_data)) {
@@ -63,10 +65,15 @@ class RangeFilterSql extends RangeFilterBase {
   }
 
   protected function getNoFieldsMessage(): string {
-    return (string) $this->t(
-      'No numeric or date fields found for this view\'s base table. '
-      . 'Ensure the view has a database base table with indexed date or numeric columns.'
-    );
+    return $this->mode === 'date'
+      ? (string) $this->t(
+          'No date fields found for this view\'s base table. '
+          . 'Ensure the view has a database base table with indexed date columns.'
+        )
+      : (string) $this->t(
+          'No numeric fields found for this view\'s base table. '
+          . 'Ensure the view has a database base table with indexed numeric columns.'
+        );
   }
 
   protected function fieldLabel(string $key): string {
@@ -164,13 +171,12 @@ class RangeFilterSql extends RangeFilterBase {
       return;
     }
 
-    $date_mode   = !empty($this->options['date_mode']);
     $granularity = $this->effectiveGranularity();
 
     // Converts a raw user value to the correct SQL format for one field.
     $convert = function (string $raw, bool $is_lower, string $field_key)
-      use ($date_mode, $granularity): string {
-      if ($raw === '' || !$date_mode || $granularity === 'none') {
+      use ($granularity): string {
+      if ($raw === '' || $granularity === 'none') {
         return $raw;
       }
       $dt = $this->parseGranularityBoundary($raw, $granularity, $is_lower);
@@ -193,7 +199,7 @@ class RangeFilterSql extends RangeFilterBase {
     static $counter = 0;
     $suffix = ++$counter;
 
-    $single_mode = !empty($this->options['single_field_mode']) || $start_key === $end_key;
+    $single_mode = $start_key === $end_key;
 
     if ($single_mode) {
       if (!str_contains($start_key, '::')) {

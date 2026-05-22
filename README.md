@@ -81,9 +81,8 @@ Clone or copy this repository into `web/modules/custom/views_range_filter/` and 
 
 | Option | Description |
 |---|---|
-| Single field mode | Match records where one field falls within the range (no start/end pair). |
 | Start field | Field holding the beginning of the range (e.g. `date_start`). |
-| End field | Field holding the end of the range (e.g. `date_end`). Hidden in single-field mode. |
+| End field | Field holding the end of the range (e.g. `date_end`). Select the same field as Start to use single-field mode (`field >= from AND field <= to`). |
 | Treat range as dates | Enable date interpretation and boundary expansion — see below. |
 | Date granularity | (Date mode only) Precision of the user's input — see below. |
 | Widget type | (Exposed only) `Text field` for free-form input, or `Dropdown` for a consecutive integer range. |

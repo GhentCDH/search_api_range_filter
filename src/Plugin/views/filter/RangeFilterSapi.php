@@ -7,11 +7,9 @@ use Drupal\search_api\Plugin\views\filter\SearchApiFilterTrait;
 use Drupal\search_api\Plugin\views\query\SearchApiQuery;
 
 /**
- * Search API Views filter for range-overlap queries across two index fields.
- *
- * @ViewsFilter("views_range_filter_sapi")
+ * Abstract Search API Views filter for range-overlap queries.
  */
-class RangeFilterSapi extends RangeFilterBase {
+abstract class RangeFilterSapi extends RangeFilterBase {
 
   use SearchApiFilterTrait;
 
@@ -25,7 +23,10 @@ class RangeFilterSapi extends RangeFilterBase {
       return [];
     }
 
-    $range_types = ['date', 'integer', 'decimal', 'float'];
+    $range_types = $this->mode === 'date'
+      ? ['date']
+      : ['integer', 'decimal', 'float'];
+
     $fields = [];
 
     foreach ($index->getFields() as $field_id => $field) {
@@ -38,10 +39,15 @@ class RangeFilterSapi extends RangeFilterBase {
   }
 
   protected function getNoFieldsMessage(): string {
-    return (string) $this->t(
-      'No range-capable fields (date, integer, decimal, float) found in this index. '
-      . 'Make sure the view is backed by a Search API index and the relevant fields are indexed.'
-    );
+    return $this->mode === 'date'
+      ? (string) $this->t(
+          'No date fields found in this index. '
+          . 'Make sure the view is backed by a Search API index and date fields are indexed.'
+        )
+      : (string) $this->t(
+          'No numeric fields (integer, decimal, float) found in this index. '
+          . 'Make sure the view is backed by a Search API index and the relevant fields are indexed.'
+        );
   }
 
   // ---------------------------------------------------------------------------
@@ -178,14 +184,13 @@ class RangeFilterSapi extends RangeFilterBase {
       return;
     }
 
-    $date_mode   = !empty($this->options['date_mode']);
     $granularity = $this->effectiveGranularity();
     $index       = $this->getIndex();
 
     // Converts a raw user value to the correct backend format for one field.
     $convert = function (string $raw, bool $is_lower, string $field_id)
-      use ($date_mode, $granularity, $index): string {
-      if ($raw === '' || !$date_mode || $granularity === 'none' || !$index instanceof Index) {
+      use ($granularity, $index): string {
+      if ($raw === '' || $granularity === 'none' || !$index instanceof Index) {
         return $raw;
       }
       $dt = $this->parseGranularityBoundary($raw, $granularity, $is_lower);
@@ -206,7 +211,7 @@ class RangeFilterSapi extends RangeFilterBase {
     $to_end     = $convert($to_raw,   FALSE, $end_field);
 
     // Single-field mode.
-    if (!empty($this->options['single_field_mode']) || $start_field === $end_field) {
+    if ($start_field === $end_field) {
       if ($from_start !== '') {
         $query->addCondition($start_field, $from_start, '>=');
       }
