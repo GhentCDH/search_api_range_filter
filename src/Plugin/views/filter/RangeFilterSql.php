@@ -23,20 +23,13 @@ abstract class RangeFilterSql extends RangeFilterBase {
 
     $base_table = $view->storage->get('base_table');
     $all_data   = Views::viewsData()->getAll();
-
-    $range_filter_ids = $this->mode === 'date'
-      ? ['date', 'datetime', 'daterange_filter']
-      : ['numeric'];
-
-    $fields = [];
+    $fields     = [];
 
     foreach ($all_data as $table_name => $table_data) {
       if (!is_array($table_data)) {
         continue;
       }
 
-      // Accept the base table itself and tables that directly join to it
-      // (covers entity field tables such as node__field_date_start).
       $joins_base = isset($table_data['table']['join'][$base_table]);
       if ($table_name !== $base_table && !$joins_base) {
         continue;
@@ -49,9 +42,23 @@ abstract class RangeFilterSql extends RangeFilterBase {
           continue;
         }
 
-        $filter_id = $field_data['filter']['id'] ?? '';
-        if (!in_array($filter_id, $range_filter_ids, TRUE)) {
-          continue;
+        if ($this->mode === 'date') {
+          if (!$this->isDateField($field_data, $table_name, $field_id)) {
+            continue;
+          }
+        }
+        else {
+          $filter_id = $field_data['filter']['id'] ?? '';
+          if ($filter_id !== 'numeric') {
+            continue;
+          }
+          if ($this->isDateField($field_data, $table_name, $field_id)) {
+            continue;
+          }
+          // Exclude entity reference fields — they store IDs, not numeric values.
+          if ($this->getEntityFieldStorageType($table_name, $field_id) === 'entity_reference') {
+            continue;
+          }
         }
 
         $label        = (string) ($field_data['title'] ?? $field_id);
@@ -255,18 +262,110 @@ abstract class RangeFilterSql extends RangeFilterBase {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns 'date' when the field's registered Views filter is a date type,
-   * otherwise 'integer'. Used to drive per-field value conversion.
+   * Returns 'date' if the field uses a date filter plugin, otherwise 'integer'.
    */
   protected function getFieldType(string $field_key): string {
     if (!str_contains($field_key, '::')) {
       return 'integer';
     }
     [$table, $col] = explode('::', $field_key, 2);
-    $date_filter_ids = ['date', 'datetime', 'daterange_filter'];
     $field_data = Views::viewsData()->get($table)[$col] ?? [];
-    $filter_id  = $field_data['filter']['id'] ?? '';
-    return in_array($filter_id, $date_filter_ids, TRUE) ? 'date' : 'integer';
+    return $this->isDateField($field_data, $table, $col) ? 'date' : 'integer';
+  }
+
+  /**
+   * Returns TRUE when the field uses a date filter plugin.
+   *
+   * Uses the filter plugin class hierarchy: \Drupal\datetime\Plugin\views\filter\Date
+   * and \Drupal\datetime_range\Plugin\views\filter\DateRange both extend the
+   * core \Drupal\views\Plugin\views\filter\Date, so any contrib plugin that
+   * also extends it is automatically included. Falls back to a known-ID check
+   * if the class lookup fails.
+   *
+   * Note: entity fields use a generic field display plugin regardless of type,
+   * so checking the field plugin class does not work — the filter plugin is the
+   * authoritative indicator of date vs. numeric behaviour.
+   */
+  /**
+   * Returns the Drupal field storage type for entity attachment table columns.
+   *
+   * Entity attachment tables are named {entity_type}__{field_name}. Only the
+   * actual value columns ({field_name}_value, {field_name}_end_value) are
+   * resolved — metadata columns (delta, entity_id, bundle, …) return NULL.
+   */
+  protected function getEntityFieldStorageType(string $table, string $col): ?string {
+    if (!$table || !$col || !str_contains($table, '__')) {
+      return NULL;
+    }
+    [$entity_type_id, $field_name] = explode('__', $table, 2);
+    $known_suffixes = ['_value', '_end_value', '_target_id'];
+    $matched = FALSE;
+    foreach ($known_suffixes as $suffix) {
+      if ($col === $field_name . $suffix) {
+        $matched = TRUE;
+        break;
+      }
+    }
+    if (!$matched) {
+      return NULL;
+    }
+    try {
+      $definitions = \Drupal::service('entity_field.manager')
+        ->getFieldStorageDefinitions($entity_type_id);
+      return ($definitions[$field_name] ?? NULL)?->getType();
+    }
+    catch (\Exception $e) {
+      return NULL;
+    }
+  }
+
+  /**
+   * @param string $table  Table name, used to resolve the entity field type.
+   * @param string $col    Column name, used to resolve the entity field type.
+   */
+  protected function isDateField(array $field_data, string $table = '', string $col = ''): bool {
+    // Check filter plugin class hierarchy.
+    $filter_id = $field_data['filter']['id'] ?? '';
+    if ($filter_id) {
+      try {
+        $def = \Drupal::service('plugin.manager.views.filter')
+          ->getDefinition($filter_id, FALSE);
+        if ($def) {
+          $base = 'Drupal\views\Plugin\views\filter\Date';
+          if (class_exists($base) && is_a($def['class'], $base, TRUE)) {
+            return TRUE;
+          }
+        }
+      }
+      catch (\Exception $e) {}
+    }
+
+    // Check field plugin class hierarchy.
+    $field_id = $field_data['field']['id'] ?? '';
+    if ($field_id) {
+      try {
+        $def = \Drupal::service('plugin.manager.views.field')
+          ->getDefinition($field_id, FALSE);
+        if ($def) {
+          $base = 'Drupal\views\Plugin\views\field\Date';
+          if (class_exists($base) && is_a($def['class'], $base, TRUE)) {
+            return TRUE;
+          }
+        }
+      }
+      catch (\Exception $e) {}
+    }
+
+    // For entity attachment tables, check the actual Drupal field storage type.
+    // Timestamp fields register a numeric Views filter but ARE date fields.
+    $entity_type = $this->getEntityFieldStorageType($table, $col);
+    if (in_array($entity_type, ['datetime', 'timestamp', 'daterange'], TRUE)) {
+      return TRUE;
+    }
+
+    // Fallback to known IDs when plugin managers are unavailable.
+    return in_array($filter_id, ['date', 'datetime', 'daterange_filter'], TRUE)
+      || in_array($field_id, ['date', 'datetime'], TRUE);
   }
 
   // ---------------------------------------------------------------------------
