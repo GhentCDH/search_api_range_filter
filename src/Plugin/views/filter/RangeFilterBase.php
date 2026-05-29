@@ -2,31 +2,56 @@
 
 namespace Drupal\views_range_filter\Plugin\views\filter;
 
+use Drupal\Component\Datetime\TimeInterface;
+use Drupal\Core\Datetime\DrupalDateTime;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\views\Plugin\views\filter\FilterPluginBase;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Abstract base for range-overlap Views filters.
  *
  * The $mode property ('date' or 'integer') is set by concrete subclasses and
  * controls which fields are offered and whether date conversion is applied.
+ *
+ * Overlap semantics:
+ *   A record is returned when its range [start, end] partially overlaps the
+ *   filter range [min, max]:  record.start <= filter.max  AND  record.end >= filter.min
+ *
+ *   An empty filter bound is always treated as infinite (open-ended).
+ *   How empty record bounds are treated is controlled by single_bound_behaviour.
  */
 abstract class RangeFilterBase extends FilterPluginBase {
 
   /** @var string 'date' or 'integer' — set by concrete subclasses. */
   protected string $mode = 'integer';
 
+  protected TimeInterface $time;
+
   // ---------------------------------------------------------------------------
   // Options
   // ---------------------------------------------------------------------------
 
+  public function __construct(array $configuration, $plugin_id, $plugin_definition, TimeInterface $time) {
+    parent::__construct($configuration, $plugin_id, $plugin_definition);
+    $this->time = $time;
+  }
+
+  public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition) {
+    return new static($configuration, $plugin_id, $plugin_definition,
+        $container->get('datetime.time'),
+    );
+  }
+
   public function defineOptions(): array {
     $options = parent::defineOptions();
-    $options['value']       = ['default' => ['min' => '', 'max' => '', 'type' => 'date']];
-    $options['start_field'] = ['default' => ''];
-    $options['end_field']   = ['default' => ''];
-    $options['from_label']  = ['default' => 'From'];
-    $options['to_label']    = ['default' => 'To'];
+    $options['value']                = ['default' => ['min' => '', 'max' => '', 'type' => 'date']];
+    $options['start_field']          = ['default' => ''];
+    $options['end_field']            = ['default' => ''];
+    $options['from_label']           = ['default' => 'From'];
+    $options['to_label']             = ['default' => 'To'];
+    $options['single_bound_behaviour'] = ['default' => 'equal'];
+    $options['missing_bounds_behaviour']     = ['default' => 'exclude'];
     return $options;
   }
 
@@ -41,8 +66,8 @@ abstract class RangeFilterBase extends FilterPluginBase {
       $form['value']['#access'] = FALSE;
     }
 
-    $is_exposed   = !empty($this->options['exposed']);
-    $is_date_mode = $this->mode === 'date';
+    $is_exposed    = !empty($this->options['exposed']);
+    $is_date_mode  = $this->mode === 'date';
     $field_options = $this->getFieldOptions();
 
     if (empty($field_options)) {
@@ -83,6 +108,32 @@ abstract class RangeFilterBase extends FilterPluginBase {
         . 'Records with an empty end field still match if the start field satisfies the condition.'
       ),
       '#required'      => TRUE,
+    ];
+
+    // -------------------------------------------------------------------------
+    // Behaviour options
+    // -------------------------------------------------------------------------
+
+    $form['range_config']['single_bound_behaviour'] = [
+      '#type'          => 'radios',
+      '#title'         => $this->t('Records with exactly one missing field (start or end)'),
+      '#options'       => [
+        'open'    => $this->t('Open-ended — treat the missing bound as infinite (e.g. an event with no end date extends indefinitely into the future).'),
+        'equal'   => $this->t('Point — treat the missing bound as equal to the other field value (e.g. an event with only a start date is treated as a point in time).'),
+        'exclude' => $this->t('Exclude — never return records that have a missing start or end field.'),
+      ],
+      '#default_value' => $this->options['single_bound_behaviour'] ?? 'equal',
+    ];
+
+    $form['range_config']['missing_bounds_behaviour'] = [
+      '#type'          => 'radios',
+      '#title'         => $this->t('Records where both start and end field are missing'),
+      '#options'       => [
+        'include' => $this->t('Always include — show these records regardless of filter values.'),
+        'exclude' => $this->t('Exclude — hide these records when the filter is active.'),
+      ],
+      '#default_value' => $this->options['missing_bounds_behaviour'] ?? 'exclude',
+      '#description'   => $this->t('Has no effect when "Exclude" is chosen above, since all records with any missing field are already excluded.'),
     ];
 
     // -------------------------------------------------------------------------
@@ -152,18 +203,21 @@ abstract class RangeFilterBase extends FilterPluginBase {
 
     $config = $form_state->getValue(['options', 'range_config']) ?? [];
 
-    foreach (['start_field', 'end_field', 'from_label', 'to_label'] as $key) {
+    foreach (['start_field', 'end_field', 'from_label', 'to_label', 'single_bound_behaviour', 'missing_bounds_behaviour'] as $key) {
       if (array_key_exists($key, $config)) {
         $this->options[$key] = $config[$key];
+        $form_state->setValue(['options', $key], $config[$key]);
       }
     }
 
     if (array_key_exists('min_value', $config) || array_key_exists('max_value', $config)) {
-      $this->options['value'] = [
+      $new_value = [
         'min'  => $config['min_value'] ?? '',
         'max'  => $config['max_value'] ?? '',
         'type' => $config['value_type'] ?? 'date',
       ];
+      $this->options['value'] = $new_value;
+      $form_state->setValue(['options', 'value'], $new_value);
     }
   }
 
@@ -177,15 +231,23 @@ abstract class RangeFilterBase extends FilterPluginBase {
     }
 
     $rc = parent::acceptExposedInput($input);
-
-    if ($rc && empty($this->options['expose']['required'])) {
-      $value = $this->value;
-      if (is_array($value) && ($value['min'] ?? '') === '' && ($value['max'] ?? '') === '') {
-        return FALSE;
-      }
+    if (!$rc) {
+      return FALSE;
     }
 
-    return $rc;
+    $value    = $this->value;
+    $min      = is_array($value) ? $this->sanitizeRangeValue((string) ($value['min'] ?? '')) : '';
+    $max      = is_array($value) ? $this->sanitizeRangeValue((string) ($value['max'] ?? '')) : '';
+    $required = !empty($this->options['expose']['required']);
+
+    if ($min === '' && $max === '') {
+      if ($required) {
+        return TRUE; // Views form validation will fire for the required constraint.
+      }
+      return FALSE; // Both bounds empty → filter inactive, show all records.
+    }
+
+    return TRUE;
   }
 
   // ---------------------------------------------------------------------------
@@ -248,6 +310,65 @@ abstract class RangeFilterBase extends FilterPluginBase {
 
   protected function sanitizeRangeValue(string $value): string {
     return mb_substr(trim(strip_tags($value)), 0, 255);
+  }
+
+  /**
+   * Parses a raw date string to a Unix timestamp.
+   *
+   * Bare 4-digit year is expanded to the appropriate day boundary:
+   *   min bound: "2020" → 2020-01-01 00:00:00
+   *   max bound: "2020" → 2020-12-31 23:59:59
+   *
+   * @param string $raw   User-supplied date string.
+   * @param string $bound 'min' or 'max'.
+   *
+   * @return int|null  Unix timestamp, or NULL if the string cannot be parsed.
+   */
+  protected function parseDateBound(string $raw, string $bound): ?int {
+    if ($raw === '') {
+      return NULL;
+    }
+
+    // YYYY → year boundary.
+    if (preg_match('/^\d{4}$/', $raw)) {
+      $raw = $bound === 'min'
+        ? $raw . '-01-01 00:00:00'
+        : $raw . '-12-31 23:59:59';
+    }
+    // YYYY-MM → month boundary (last day via PHP 't' format).
+    elseif (preg_match('/^\d{4}-\d{2}$/', $raw)) {
+      if ($bound === 'min') {
+        $raw .= '-01 00:00:00';
+      }
+      else {
+        try {
+          $dt = new DrupalDateTime($raw . '-01', 'UTC');
+          if ($dt->hasErrors()) {
+            return NULL;
+          }
+          $raw = $dt->format('Y-m-t') . 'T23:59:59';
+        }
+        catch (\Throwable $e) {
+          return NULL;
+        }
+      }
+    }
+    // YYYY-MM-DD → day boundary.
+    elseif (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+      $raw .= $bound === 'min' ? ' 00:00:00' : ' 23:59:59';
+    }
+    // YYYY-MM-DD HH:MM → minute boundary (max only; min already at :00).
+    elseif ($bound === 'max' && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $raw)) {
+      $raw .= ':59';
+    }
+
+    try {
+      $dt = new DrupalDateTime($raw, 'UTC');
+      return $dt->hasErrors() ? NULL : $dt->getTimestamp();
+    }
+    catch (\Throwable $e) {
+      return NULL;
+    }
   }
 
   // ---------------------------------------------------------------------------

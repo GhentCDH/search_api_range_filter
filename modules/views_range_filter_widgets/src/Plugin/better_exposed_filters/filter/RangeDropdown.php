@@ -56,11 +56,13 @@ class RangeDropdown extends FilterWidgetBase {
   public function buildConfigurationForm(array $form, FormStateInterface $form_state): array {
     $form = parent::buildConfigurationForm($form, $form_state);
 
-    $saved = $this->configuration['int_range'] ?? [];
+    $saved     = $this->configuration['int_range'] ?? [];
+    $filter_id = $this->handler->options['id'];
+    $prefix    = 'exposed_form_options[bef][filter][' . $filter_id . '][configuration][int_range]';
 
-    $widget_name  = $this->getFormKeyPrefix() . '[int_range][use_auto_range]';
-    $cur_year_min = $this->getFormKeyPrefix() . '[int_range][use_current_year_min]';
-    $cur_year_max = $this->getFormKeyPrefix() . '[int_range][use_current_year_max]';
+    $widget_name  = $prefix . '[use_auto_range]';
+    $cur_year_min = $prefix . '[use_current_year_min]';
+    $cur_year_max = $prefix . '[use_current_year_max]';
 
     $form['int_range'] = [
       '#type'  => 'details',
@@ -129,17 +131,6 @@ class RangeDropdown extends FilterWidgetBase {
     return $form;
   }
 
-  /**
-   * {@inheritdoc}
-   */
-  public function submitConfigurationForm(array &$form, FormStateInterface $form_state): void {
-    parent::submitConfigurationForm($form, $form_state);
-    $this->configuration['int_range'] = $form_state->getValue(
-      array_merge($this->getFormParents($form_state), ['int_range']),
-      []
-    );
-  }
-
   // ---------------------------------------------------------------------------
   // Exposed form alteration
   // ---------------------------------------------------------------------------
@@ -159,12 +150,20 @@ class RangeDropdown extends FilterWidgetBase {
       return;
     }
 
-    // Resolve the target element, accounting for Views' wrapper element.
-    if (!isset($form[$field_id]) && isset($form[$wrapper_id][$field_id])) {
-      $element = &$form[$wrapper_id][$field_id];
+    // After parent::exposedFormAlter(), BEF wraps elements that have min/max
+    // children: $form[$field_id] = ['#type' => 'container', $field_id => $orig].
+    // Try the nested (wrapped) path first, then unwrapped fallbacks.
+    if (isset($form[$field_id][$field_id]['min'])) {
+      $element = &$form[$field_id][$field_id];
     }
-    elseif (isset($form[$field_id])) {
+    elseif (isset($form[$wrapper_id][$wrapper_id][$field_id]['min'])) {
+      $element = &$form[$wrapper_id][$wrapper_id][$field_id];
+    }
+    elseif (isset($form[$field_id]['min'])) {
       $element = &$form[$field_id];
+    }
+    elseif (isset($form[$wrapper_id][$field_id]['min'])) {
+      $element = &$form[$wrapper_id][$field_id];
     }
     else {
       return;
@@ -224,13 +223,13 @@ class RangeDropdown extends FilterWidgetBase {
       $year_vals = [];
       if ($start_auto !== NULL) {
         $t           = $start_auto['type'] ?? 'integer';
-        $year_vals[] = $this->extractYearOrInt($start_auto['min'], $t);
-        $year_vals[] = $this->extractYearOrInt($start_auto['max'], $t);
+        $year_vals[] = $this->extractYearOrInt($start_auto['min'], $t, 'min');
+        $year_vals[] = $this->extractYearOrInt($start_auto['max'], $t, 'max');
       }
       if ($end_auto !== NULL) {
         $t           = $end_auto['type'] ?? 'integer';
-        $year_vals[] = $this->extractYearOrInt($end_auto['min'], $t);
-        $year_vals[] = $this->extractYearOrInt($end_auto['max'], $t);
+        $year_vals[] = $this->extractYearOrInt($end_auto['min'], $t, 'min');
+        $year_vals[] = $this->extractYearOrInt($end_auto['max'], $t, 'max');
       }
 
       if (!empty($year_vals)) {
@@ -281,9 +280,9 @@ class RangeDropdown extends FilterWidgetBase {
    *
    * @return int
    */
-  protected function extractYearOrInt(mixed $value, string $field_type = 'integer'): int {
+  protected function extractYearOrInt(mixed $value, string $field_type = 'integer', string $bound = 'min'): int {
     if (is_numeric($value)) {
-      $int = (int) $value;
+      $int = $bound === 'min' ? (int) floor((float) $value) : (int) ceil((float) $value);
       if ($field_type === 'date' || abs($int) > 9999) {
         try {
           return (int) (new \DateTime('@' . $int))->format('Y');
@@ -301,24 +300,6 @@ class RangeDropdown extends FilterWidgetBase {
     catch (\Exception $e) {
       return (int) substr((string) $value, 0, 4);
     }
-  }
-
-  /**
-   * Returns the form key prefix for use in #states selectors.
-   *
-   * BEF stores widget config under a nested path; we need the input[name] path
-   * for JavaScript #states. This returns a placeholder that subclasses or the
-   * parent class should override if the form structure differs.
-   */
-  protected function getFormKeyPrefix(): string {
-    return 'views_range_filter_dropdown[int_range]';
-  }
-
-  /**
-   * Returns the form parents array for use in form state value retrieval.
-   */
-  protected function getFormParents(FormStateInterface $form_state): array {
-    return [];
   }
 
 }

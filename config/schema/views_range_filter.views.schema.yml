@@ -6,49 +6,33 @@ views.filter.views_range_filter_sapi_date:
       type: mapping
       label: 'Filter values'
       mapping:
-        from:
+        min:
           type: string
           label: 'From value'
-        to:
+        max:
           type: string
           label: 'To value'
+        type:
+          type: string
+          label: 'Value type (date or offset)'
     start_field:
       type: string
       label: 'Start field'
     end_field:
       type: string
       label: 'End field'
-    widget:
-      type: string
-      label: 'Widget type'
-    granularity:
-      type: string
-      label: 'Date granularity'
     from_label:
       type: label
       label: '"From" label'
     to_label:
       type: label
       label: '"To" label'
-    int_range:
-      type: mapping
-      label: 'Integer range configuration'
-      mapping:
-        use_auto_range:
-          type: boolean
-          label: 'Auto-calculate range from data'
-        min:
-          type: integer
-          label: 'Minimum value'
-        max:
-          type: integer
-          label: 'Maximum value'
-        use_current_year_min:
-          type: boolean
-          label: 'Use current year as minimum'
-        use_current_year_max:
-          type: boolean
-          label: 'Use current year as maximum'
+    single_bound_behaviour:
+      type: string
+      label: 'Record NULL field behaviour (open, equal, exclude)'
+    missing_bounds_behaviour:
+      type: string
+      label: 'Record both-NULL behaviour (include, exclude)'
 
 views.filter.views_range_filter_sapi_int:
   type: views.filter.search_api
@@ -58,144 +42,102 @@ views.filter.views_range_filter_sapi_int:
       type: mapping
       label: 'Filter values'
       mapping:
-        from:
+        min:
           type: string
           label: 'From value'
-        to:
+        max:
           type: string
           label: 'To value'
+        type:
+          type: string
+          label: 'Value type'
     start_field:
       type: string
       label: 'Start field'
     end_field:
       type: string
       label: 'End field'
-    widget:
-      type: string
-      label: 'Widget type'
     from_label:
       type: label
       label: '"From" label'
     to_label:
       type: label
       label: '"To" label'
-    int_range:
-      type: mapping
-      label: 'Integer range configuration'
-      mapping:
-        use_auto_range:
-          type: boolean
-          label: 'Auto-calculate range from data'
-        min:
-          type: integer
-          label: 'Minimum value'
-        max:
-          type: integer
-          label: 'Maximum value'
-        use_current_year_min:
-          type: boolean
-          label: 'Use current year as minimum'
-        use_current_year_max:
-          type: boolean
-          label: 'Use current year as maximum'
+    single_bound_behaviour:
+      type: string
+      label: 'Record NULL field behaviour (open, equal, exclude)'
+    missing_bounds_behaviour:
+      type: string
+      label: 'Record both-NULL behaviour (include, exclude)'
 
 views.filter.views_range_filter_sql_date:
-  type: views.filter
+  type: views_filter
   label: 'SQL Date Range Filter'
   mapping:
     value:
       type: mapping
       label: 'Filter values'
       mapping:
-        from:
+        min:
           type: string
           label: 'From value'
-        to:
+        max:
           type: string
           label: 'To value'
+        type:
+          type: string
+          label: 'Value type (date or offset)'
     start_field:
       type: string
       label: 'Start field'
     end_field:
       type: string
       label: 'End field'
-    widget:
-      type: string
-      label: 'Widget type'
-    granularity:
-      type: string
-      label: 'Date granularity'
     from_label:
       type: label
       label: '"From" label'
     to_label:
       type: label
       label: '"To" label'
-    int_range:
-      type: mapping
-      label: 'Integer range configuration'
-      mapping:
-        use_auto_range:
-          type: boolean
-          label: 'Auto-calculate range from data'
-        min:
-          type: integer
-          label: 'Minimum value'
-        max:
-          type: integer
-          label: 'Maximum value'
-        use_current_year_min:
-          type: boolean
-          label: 'Use current year as minimum'
-        use_current_year_max:
-          type: boolean
-          label: 'Use current year as maximum'
+    single_bound_behaviour:
+      type: string
+      label: 'Record NULL field behaviour (open, equal, exclude)'
+    missing_bounds_behaviour:
+      type: string
+      label: 'Record both-NULL behaviour (include, exclude)'
 
 views.filter.views_range_filter_sql_int:
-  type: views.filter
+  type: views_filter
   label: 'SQL Numeric Range Filter'
   mapping:
     value:
       type: mapping
       label: 'Filter values'
       mapping:
-        from:
+        min:
           type: string
           label: 'From value'
-        to:
+        max:
           type: string
           label: 'To value'
+        type:
+          type: string
+          label: 'Value type'
     start_field:
       type: string
       label: 'Start field'
     end_field:
       type: string
       label: 'End field'
-    widget:
-      type: string
-      label: 'Widget type'
     from_label:
       type: label
       label: '"From" label'
     to_label:
       type: label
       label: '"To" label'
-    int_range:
-      type: mapping
-      label: 'Integer range configuration'
-      mapping:
-        use_auto_range:
-          type: boolean
-          label: 'Auto-calculate range from data'
-        min:
-          type: integer
-          label: 'Minimum value'
-        max:
-          type: integer
-          label: 'Maximum value'
-        use_current_year_min:
-          type: boolean
-          label: 'Use current year as minimum'
-        use_current_year_max:
-          type: boolean
-          label: 'Use current year as maximum'
+    single_bound_behaviour:
+      type: string
+      label: 'Record NULL field behaviour (open, equal, exclude)'
+    missing_bounds_behaviour:
+      type: string
+      label: 'Record both-NULL behaviour (include, exclude)'
