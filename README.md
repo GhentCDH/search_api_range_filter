@@ -10,10 +10,14 @@ Match records whose stored `[start, end]` interval overlaps a user-supplied `[fr
 
 ```
 src/Plugin/views/filter/
-  RangeFilterBase.php     — abstract base (options form, widget, sanitization)
-  RangeFilterSapi.php     — Search API filter (@ViewsFilter("views_range_filter_sapi"))
-  RangeFilterSql.php      — SQL filter       (@ViewsFilter("views_range_filter_sql"))
-views_range_filter.views.inc   — Views data integration (registers both filters)
+  RangeFilterBase.php       — abstract base (options form, widget, sanitization)
+  RangeFilterSapi.php       — Search API abstract base
+  RangeFilterSapiDate.php   — SAPI date filter   (@ViewsFilter("views_range_filter_sapi_date"))
+  RangeFilterSapiInt.php    — SAPI numeric filter (@ViewsFilter("views_range_filter_sapi_int"))
+  RangeFilterSql.php        — SQL abstract base
+  RangeFilterSqlDate.php    — SQL date filter     (@ViewsFilter("views_range_filter_sql_date"))
+  RangeFilterSqlInt.php     — SQL numeric filter  (@ViewsFilter("views_range_filter_sql_int"))
+views_range_filter.views.inc   — Views data integration (registers all four filters)
 config/schema/                 — Views config schema for config export
 ```
 
@@ -72,9 +76,10 @@ Clone or copy this repository into `web/modules/custom/views_range_filter/` and 
 ## Configuration
 
 1. Open a View — either a Search API view or a regular SQL-backed view.
-2. Click **Add** next to **Filter criteria**. A **Range filter** entry appears under the view's base table group.
-   - In a Search API view the filter works against index fields.
-   - In a SQL view the filter works against database columns.
+2. Click **Add** next to **Filter criteria**. Two range filter entries appear under the view's base table group:
+   - **Date range filter** — for date and datetime fields.
+   - **Numeric range filter** — for integer, decimal, and float fields.
+   In a Search API view these work against index fields; in a SQL view they work against database columns.
 3. Configure the filter.
 
 ### Filter options
@@ -83,20 +88,17 @@ Clone or copy this repository into `web/modules/custom/views_range_filter/` and 
 |---|---|
 | Start field | Field holding the beginning of the range (e.g. `date_start`). |
 | End field | Field holding the end of the range (e.g. `date_end`). Select the same field as Start to use single-field mode (`field >= from AND field <= to`). |
-| Treat range as dates | Enable date interpretation and boundary expansion — see below. |
-| Date granularity | (Date mode only) Precision of the user's input — see below. |
-| Widget type | (Exposed only) `Text field` for free-form input, or `Dropdown` for a consecutive integer range. |
-| From / To labels | Customizable labels for the exposed filter inputs. |
-| Auto-calculate range | (Dropdown only) Derive min/max from the actual data; cached 1 hour. |
-| Min / Max | (Dropdown only) Manual bounds, with optional "use current year" checkboxes. |
+| Records with exactly one missing field | Controls how records with a NULL start or end are treated — open-ended, point, or excluded. |
+| Records where both fields are missing | Whether to always include or exclude records with both fields NULL. |
+| From / To labels | (Exposed only) Customizable labels for the filter inputs. |
+| Auto-calculate range | (Dropdown widget only) Derive min/max from the actual data; cached 1 hour. |
+| Min / Max | (Dropdown widget only) Manual bounds, with optional "use current year" checkboxes. |
 
-### Date mode and granularity
+### Date mode: boundary expansion
 
-**"Treat range as dates" disabled (default):** values are compared as-is — no conversion is applied. Use this for purely numeric fields (prices, counts, etc.) or when you want to enter raw backend-native values.
+The **Date range filter** converts each user-supplied value to a period boundary before comparing. The input format determines precision:
 
-**"Treat range as dates" enabled:** the module converts each entered value to a period boundary according to the selected granularity, then adapts it to the format each field's backend expects.
-
-| Granularity | User enters | `>=` boundary | `<=` boundary |
+| Input format | User enters | `>=` boundary | `<=` boundary |
 |---|---|---|---|
 | Year | `1492` | `1492-01-01 00:00:00` | `1492-12-31 23:59:59` |
 | Month | `1492-03` | `1492-03-01 00:00:00` | `1492-03-31 23:59:59` |
@@ -112,9 +114,7 @@ The converted boundary is then formatted per field type:
 | Date field | Unix timestamp (int) | UTC ISO 8601 string | `YYYY-MM-DD HH:MM:SS` string |
 | Integer field | Year as integer | Year as integer | Year as integer |
 
-**Integer fields in date mode** are assumed to store year values (e.g. `1492`, `2024`). The expanded year boundary integer is compared directly against the column — no timestamp conversion. This is the correct behaviour for fields that store a plain year number.
-
-The **Dropdown widget** always uses Year granularity regardless of the granularity setting, since it emits consecutive integer year values.
+The **Dropdown widget** always emits consecutive integer year values, regardless of the input format above.
 
 ## License
 

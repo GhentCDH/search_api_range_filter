@@ -143,20 +143,7 @@ abstract class RangeFilterSql extends RangeFilterBase {
     }
 
     try {
-      $query = $this->database->select($table, 't');
-      $query->addExpression("MIN(t.$col)", 'min_val');
-      $query->addExpression("MAX(t.$col)", 'max_val');
-      $row = $query->execute()->fetchObject();
-
-      if (!$row || $row->min_val === NULL) {
-        return NULL;
-      }
-
-      $result = [
-        'min'  => $row->min_val,
-        'max'  => $row->max_val,
-        'type' => $this->getFieldType($field_key),
-      ];
+      $row = $this->resolveMinMaxFromTable($this->database, $table, $col);
     }
     catch (\Exception $e) {
       $this->logger->warning(
@@ -165,6 +152,16 @@ abstract class RangeFilterSql extends RangeFilterBase {
       );
       return NULL;
     }
+
+    if ($row === NULL) {
+      return NULL;
+    }
+
+    $result = [
+      'min'  => $row['min'],
+      'max'  => $row['max'],
+      'type' => $this->getFieldType($field_key),
+    ];
 
     $cache_bin->set(
       $cache_id,

@@ -4,6 +4,7 @@ namespace Drupal\views_range_filter\Plugin\views\filter;
 
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Core\Cache\CacheBackendInterface;
+use Drupal\Core\Form\FormStateInterface;
 use Drupal\search_api\Entity\Index;
 use Drupal\search_api\Plugin\views\filter\SearchApiFilterTrait;
 use Drupal\search_api\Plugin\views\query\SearchApiQuery;
@@ -35,6 +36,21 @@ abstract class RangeFilterSapi extends RangeFilterBase {
       $container->get('cache.data'),
       $container->get('logger.factory')->get('views_range_filter'),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Exposed widget
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Defines the value form for the exposed filter.
+   *
+   * Explicitly defined here so that the class-level method takes precedence
+   * over SearchApiFilterTrait::valueForm(), which would otherwise remove the
+   * custom min/max fields built by RangeFilterBase::valueForm().
+   */
+  protected function valueForm(&$form, FormStateInterface $form_state) {
+    parent::valueForm($form, $form_state);
   }
 
   // ---------------------------------------------------------------------------
@@ -150,7 +166,13 @@ abstract class RangeFilterSapi extends RangeFilterBase {
       $field  = $item->getField($field_id);
       $values = $field ? $field->getValues() : [];
 
-      return empty($values) ? NULL : reset($values);
+      if (!empty($values)) {
+        return reset($values);
+      }
+
+      // search_api_db does not populate field values in result items.
+      // Fall back to a direct MIN/MAX query on the backend's index table.
+      return $this->queryMinMaxFromDb($index, $field_id, $order);
     };
 
     $min = $get_boundary('ASC');
@@ -167,6 +189,55 @@ abstract class RangeFilterSapi extends RangeFilterBase {
       'max'  => $max,
       'type' => $index_field ? $index_field->getType() : 'integer',
     ];
+  }
+
+  /**
+   * Queries MIN or MAX for a field directly from the search_api_db index table.
+   *
+   * search_api_db can be configured to use an external database that differs
+   * from Drupal's default connection. The correct Connection is obtained via
+   * the backend's getDatabase() method, which returns exactly the connection
+   * the backend itself uses to store index data.
+   *
+   * Table and column metadata are read from the 'search_api_db.indexes'
+   * key-value store, which is the canonical source for this information.
+   *
+   * Returns NULL for non-DB backends or when the field info is unavailable.
+   */
+  protected function queryMinMaxFromDb(Index $index, string $field_id, string $order): mixed {
+    try {
+      $server = $index->getServerInstance();
+      if ($server->getBackendId() !== 'search_api_db') {
+        return NULL;
+      }
+
+      $db_info = \Drupal::keyValue('search_api_db.indexes')->get($index->id());
+      if (empty($db_info['field_tables'][$field_id])) {
+        return NULL;
+      }
+
+      $field_info = $db_info['field_tables'][$field_id];
+      $table = $field_info['table'];
+      // search_api_db stores the column name as it would appear in the
+      // denormalized index table. In a per-field table the column is
+      // always 'value'; only use the stored name when the field lives
+      // in the main index table.
+      $in_main_table = ($table === ($db_info['index_table'] ?? ''));
+      $column = $in_main_table ? ($field_info['column'] ?? 'value') : 'value';
+
+      // Use the backend's own Connection — it may point to an external database.
+      $db  = $server->getBackend()->getDatabase();
+      $row = $this->resolveMinMaxFromTable($db, $table, $column);
+
+      if ($row === NULL) {
+        return NULL;
+      }
+
+      return $order === 'ASC' ? $row['min'] : $row['max'];
+    }
+    catch (\Exception $e) {
+      return NULL;
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 namespace Drupal\views_range_filter\Plugin\views\filter;
 
 use Drupal\Component\Datetime\TimeInterface;
+use Drupal\Core\Database\Connection;
 use Drupal\Core\Datetime\DrupalDateTime;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\views\Plugin\views\filter\FilterPluginBase;
@@ -254,7 +255,7 @@ abstract class RangeFilterBase extends FilterPluginBase {
   // Exposed widget
   // ---------------------------------------------------------------------------
 
-  protected function valueForm(&$form, FormStateInterface $form_state): void {
+  protected function valueForm(&$form, FormStateInterface $form_state) {
     $form['value']['#tree'] = TRUE;
 
     $from_label = $this->options['from_label'] ?: $this->t('From');
@@ -369,6 +370,32 @@ abstract class RangeFilterBase extends FilterPluginBase {
     catch (\Throwable $e) {
       return NULL;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared DB helper
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns MIN and MAX for a column via a direct database query.
+   *
+   * Shared by RangeFilterSql (using Drupal's default connection) and by the
+   * search_api_db fallback in RangeFilterSapi (using the backend's own
+   * connection, which may point to an external database).
+   *
+   * @return array{min: mixed, max: mixed}|null
+   */
+  protected function resolveMinMaxFromTable(Connection $db, string $table, string $column): ?array {
+    $query = $db->select($table, 't');
+    $query->addExpression("MIN(t.$column)", 'min_val');
+    $query->addExpression("MAX(t.$column)", 'max_val');
+    $row = $query->execute()->fetchObject();
+
+    if (!$row || $row->min_val === NULL) {
+      return NULL;
+    }
+
+    return ['min' => $row->min_val, 'max' => $row->max_val];
   }
 
   // ---------------------------------------------------------------------------
