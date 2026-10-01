@@ -7,9 +7,11 @@
 
 use Drupal\views\Plugin\views\filter\FilterPluginBase;
 
-
 /**
  * Implements hook_views_filters_summary_info_alter().
+ *
+ * Shows the active range in the views_filters_summary area, e.g. "≥ 2020" or
+ * "2018 – 2024". The raw value "from|to" identifies the filter for removal.
  */
 function search_api_range_filter_views_filters_summary_info_alter(array &$info, FilterPluginBase $filter): void {
   if ($filter->getPluginId() !== 'search_api_range_filter') {
@@ -17,8 +19,8 @@ function search_api_range_filter_views_filters_summary_info_alter(array &$info, 
   }
 
   $values = is_array($filter->value) ? $filter->value : [];
-  $from   = trim((string) ($values['from'] ?? ''));
-  $to     = trim((string) ($values['to']   ?? ''));
+  $from = trim((string) ($values['from'] ?? ''));
+  $to = trim((string) ($values['to'] ?? ''));
 
   if ($from === '' && $to === '') {
     $info['value'] = NULL;
@@ -27,15 +29,19 @@ function search_api_range_filter_views_filters_summary_info_alter(array &$info, 
 
   if ($from !== '' && $to !== '') {
     $display = $from . ' – ' . $to;
-  } elseif ($from !== '') {
+  }
+  elseif ($from !== '') {
     $display = '≥ ' . $from;
-  } else {
+  }
+  else {
     $display = '≤ ' . $to;
   }
 
-  $info['value'] = [[
-    'id'    => 0,
-    'raw'   => $from . '|' . $to,
-    'value' => $display,
-  ]];
+  $info['value'] = [
+    [
+      'id' => 0,
+      'raw' => $from . '|' . $to,
+      'value' => $display,
+    ],
+  ];
 }

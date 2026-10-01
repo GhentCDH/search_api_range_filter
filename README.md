@@ -2,7 +2,7 @@
 
 A lightweight Drupal module that provides a Search API Views filter for range-overlap queries across two index fields.
 
-> **Backend note**: the overlap logic works with any Search API backend. The only Elasticsearch-specific part is the year-to-date conversion used when combining a `date` type field with the dropdown widget — it produces ISO 8601 strings that match Elasticsearch's storage format. On other backends (e.g. database), use the text field widget for date fields, or stick to integer/decimal/float fields.
+> **Backends**: tested with the Search API Database backend (automated tests) and Elasticsearch (`elasticsearch_connector`). Date values are sent as UTC timestamps in numeric strings, which both backends understand.
 
 ## Purpose
 
@@ -28,7 +28,13 @@ Expanded into Search API condition groups:
 - `(end >= from) OR (end IS NULL AND start >= from)`
 - `(start <= to) OR (start IS NULL AND end <= to)`
 
-This handles records where the end field is empty (open-ended intervals still match if the start field satisfies the condition).
+By default, a record without an end value ends at its start value. With **Records without an end value: Are still running**, such records match every "from" value (as long as they have a start), which suits ongoing periods like "active since 1990".
+
+When "from" is after "to", the two values are swapped.
+
+## Date values
+
+On `date` index fields, both widgets accept a year (`YYYY`); the text field also accepts a month (`YYYY-MM`) or a date (`YYYY-MM-DD`). "From" means the first second of that period and "to" its last second, in UTC. Historical and negative years work: `50` is the year 50, not 2050. Invalid input shows a validation message.
 
 ## Requirements
 
@@ -74,18 +80,30 @@ Clone or copy this repository into `web/modules/custom/search_api_range_filter/`
 ## Configuration
 
 1. Open a View backed by a Search API index.
-2. Click **Add** next to **Filter criteria** and select **Range filter (two fields)** under the group **Custom Global**.
+2. Click **Add** next to **Filter criteria** and select **Range filter (two fields)** in the index's group.
 3. Configure the filter:
 
 | Option | Description |
 |---|---|
 | Start field | Index field holding the beginning of the range (e.g. `date_start`). |
-| End field | Index field holding the end of the range (e.g. `date_end`). |
+| End field | Index field holding the end of the range (e.g. `date_end`). Must have the same type as the start field. |
+| Records without an end value | *End at their start value* (default) or *Are still running*. |
 | Widget type | `Text field` or `Dropdown (consecutive integer range)`. |
 | From / To labels | Customizable labels for the exposed filter inputs. |
 | Min / Max (dropdown) | Value range for the dropdown widget, with optional "use current year" checkboxes. |
 
-Date fields with the dropdown widget: year integers are automatically converted to ISO 8601 boundary strings (`>= year` → Jan 1 at 00:00:00; `<= year` → Dec 31 at 23:59:59).
+The filter is normally exposed. When it is not exposed, the from/to values entered in the filter settings are always applied; when it is exposed, they are the default values. Grouped filters and operators are not supported.
+
+With *Use current year*, the dropdown's cached output expires on 1 January.
+
+## Running the tests
+
+The kernel tests use the Search API Database backend and need `drupal/search_api` installed:
+
+```bash
+cd web
+SIMPLETEST_DB=sqlite://localhost//tmp/test.sqlite ../vendor/bin/phpunit -c core/phpunit.xml.dist modules/custom/search_api_range_filter/tests
+```
 
 ## License
 

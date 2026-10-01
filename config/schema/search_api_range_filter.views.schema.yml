@@ -1,5 +1,5 @@
 views.filter.search_api_range_filter:
-  type: views.filter.search_api
+  type: views_filter
   label: 'Search API Range Filter'
   mapping:
     value:
@@ -18,6 +18,9 @@ views.filter.search_api_range_filter:
     end_field:
       type: string
       label: 'End field'
+    empty_end:
+      type: string
+      label: 'Records without an end value: start or open'
     widget:
       type: string
       label: 'Widget type'

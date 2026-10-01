@@ -1,6 +1,6 @@
 name: 'Search API Range Filter'
 type: module
-description: 'Provides a Search API Views filter for range-overlap queries across two index fields (e.g. date_start / date_end). Works with any backend; the year-dropdown widget on date fields requires Elasticsearch.'
+description: 'Provides a Search API Views filter for range-overlap queries across two index fields (e.g. date_start / date_end).'
 package: 'Custom'
 core_version_requirement: ^10 || ^11
 dependencies:
