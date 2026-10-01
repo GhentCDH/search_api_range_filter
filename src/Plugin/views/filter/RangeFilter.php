@@ -3,11 +3,19 @@
 namespace Drupal\search_api_range_filter\Plugin\views\filter;
 
 use Drupal\Component\Datetime\TimeInterface;
+use Drupal\Core\Cache\Cache;
+use Drupal\Core\Cache\CacheBackendInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Language\LanguageInterface;
+use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+use Drupal\Core\Session\AnonymousUserSession;
 use Drupal\search_api\Plugin\views\query\SearchApiQuery;
 use Drupal\search_api\Plugin\views\SearchApiHandlerTrait;
+use Drupal\search_api\Query\QueryInterface;
 use Drupal\views\Plugin\views\filter\FilterPluginBase;
+use Drupal\views\ViewExecutableFactory;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -50,6 +58,11 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
   protected const RANGE_TYPES = ['date', 'integer', 'decimal'];
 
   /**
+   * Whether a lowest/highest value lookup is running, to prevent recursion.
+   */
+  protected static bool $lookupRunning = FALSE;
+
+  /**
    * Constructs a RangeFilter.
    *
    * @param array $configuration
@@ -60,12 +73,24 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
    *   The plugin implementation definition.
    * @param \Drupal\Component\Datetime\TimeInterface $time
    *   The time service.
+   * @param \Drupal\Core\Cache\CacheBackendInterface $cache
+   *   The cache backend for the lowest and highest values.
+   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entityTypeManager
+   *   The entity type manager.
+   * @param \Drupal\views\ViewExecutableFactory $executableFactory
+   *   The view executable factory.
+   * @param \Drupal\Core\Language\LanguageManagerInterface $languageManager
+   *   The language manager.
    */
   public function __construct(
     array $configuration,
     $plugin_id,
     $plugin_definition,
     protected TimeInterface $time,
+    protected CacheBackendInterface $cache,
+    protected EntityTypeManagerInterface $entityTypeManager,
+    protected ViewExecutableFactory $executableFactory,
+    protected LanguageManagerInterface $languageManager,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
   }
@@ -79,6 +104,10 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
       $plugin_id,
       $plugin_definition,
       $container->get('datetime.time'),
+      $container->get('cache.data'),
+      $container->get('entity_type.manager'),
+      $container->get('views.executable'),
+      $container->get('language_manager'),
     );
   }
 
@@ -181,11 +210,12 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
       '#type' => 'radios',
       '#title' => $this->t('Widget type'),
       '#options' => [
-        'textfield' => $this->t('Text field'),
+        'textfield' => $this->t('Text field (on date fields: YYYY, YYYY-MM or YYYY-MM-DD)'),
+        'number' => $this->t('Number field (on date fields: a year)'),
         'select_range' => $this->t('Dropdown (consecutive integer range)'),
       ],
       '#default_value' => $this->options['widget'],
-      '#description' => $this->t('Input widget shown to end users. Use <em>Dropdown</em> for year ranges. On date fields, the text field accepts a year (YYYY), a month (YYYY-MM) or a date (YYYY-MM-DD).'),
+      '#description' => $this->t('Input widget shown to end users. Use <em>Dropdown</em> or <em>Number field</em> for year ranges.'),
     ];
 
     $this->buildIntRangeSubForm($form['range_config'], $this->options['int_range']);
@@ -201,50 +231,47 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
    */
   protected function buildIntRangeSubForm(array &$parent, array $saved): void {
     $widget = ':input[name="options[range_config][widget]"]';
-    $current_year_min = ':input[name="options[range_config][int_range][use_current_year_min]"]';
-    $current_year_max = ':input[name="options[range_config][int_range][use_current_year_max]"]';
-
-    $range_visible = [
-      'visible' => [$widget => ['value' => 'select_range']],
-    ];
-    $min_visible = [$widget => ['value' => 'select_range'], $current_year_min => ['checked' => FALSE]];
-    $max_visible = [$widget => ['value' => 'select_range'], $current_year_max => ['checked' => FALSE]];
-
-    $parent['int_range'] = ['#type' => 'container'];
-
-    $parent['int_range']['min'] = [
-      '#type' => 'number',
-      '#title' => $this->t('Minimum value'),
-      '#default_value' => $saved['min'] ?? 1,
-      '#description' => $this->t('Starting value for the dropdown.'),
-      '#size' => 10,
-      '#states' => ['visible' => $min_visible, 'required' => $min_visible],
+    $parent['int_range'] = [
+      '#type' => 'container',
+      '#states' => ['visible' => [$widget => ['value' => 'select_range']]],
     ];
 
-    $parent['int_range']['use_current_year_min'] = [
-      '#type' => 'checkbox',
-      '#title' => $this->t('Use current year as minimum'),
-      '#default_value' => $saved['use_current_year_min'] ?? FALSE,
-      '#description' => $this->t('Overrides the minimum value above with the current year.'),
-      '#states' => $range_visible,
+    $labels = [
+      'min' => [
+        'title' => $this->t('Minimum value'),
+        'index' => $this->t('Lowest value in the results'),
+      ],
+      'max' => [
+        'title' => $this->t('Maximum value'),
+        'index' => $this->t('Highest value in the results'),
+      ],
     ];
+    foreach ($labels as $key => $label) {
+      $source = ':input[name="options[range_config][int_range][' . $key . '_source]"]';
+      $fixed = [$widget => ['value' => 'select_range'], $source => ['value' => 'fixed']];
 
-    $parent['int_range']['max'] = [
-      '#type' => 'number',
-      '#title' => $this->t('Maximum value'),
-      '#default_value' => $saved['max'] ?? $this->getCurrentYear(),
-      '#description' => $this->t('Ending value for the dropdown.'),
-      '#size' => 10,
-      '#states' => ['visible' => $max_visible, 'required' => $max_visible],
-    ];
-
-    $parent['int_range']['use_current_year_max'] = [
-      '#type' => 'checkbox',
-      '#title' => $this->t('Use current year as maximum'),
-      '#default_value' => $saved['use_current_year_max'] ?? TRUE,
-      '#description' => $this->t('Overrides the maximum value above with the current year.'),
-      '#states' => $range_visible,
-    ];
+      $parent['int_range'][$key . '_source'] = [
+        '#type' => 'radios',
+        '#title' => $label['title'],
+        '#options' => [
+          'fixed' => $this->t('Fixed value'),
+          'current_year' => $this->t('Current year'),
+          'index' => $label['index'],
+        ],
+        '#default_value' => $this->getBoundSource($saved, $key),
+        '#description' => $key === 'min'
+          ? $this->t('"Lowest value in the results" uses the start values of the items this view shows without its exposed filters. On date fields, this is the year.')
+          : $this->t('"Highest value in the results" uses the end values of the items this view shows without its exposed filters. On date fields, this is the year.'),
+      ];
+      $parent['int_range'][$key] = [
+        '#type' => 'number',
+        '#title' => $label['title'],
+        '#title_display' => 'invisible',
+        '#default_value' => $saved[$key] ?? ($key === 'min' ? 1 : $this->getCurrentYear()),
+        '#size' => 10,
+        '#states' => ['visible' => $fixed, 'required' => $fixed],
+      ];
+    }
   }
 
   /**
@@ -264,7 +291,7 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
     if (($config['widget'] ?? '') === 'select_range') {
       $int_range = $config['int_range'] ?? [];
       foreach (['min' => $this->t('minimum'), 'max' => $this->t('maximum')] as $key => $label) {
-        if (empty($int_range['use_current_year_' . $key]) && ($int_range[$key] ?? '') === '') {
+        if ($this->getBoundSource($int_range, $key) === 'fixed' && ($int_range[$key] ?? '') === '') {
           $form_state->setError($form['range_config']['int_range'][$key], $this->t('A @label value is required for the dropdown.', ['@label' => $label]));
         }
       }
@@ -283,6 +310,8 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
         $this->options[$key] = $config[$key];
       }
     }
+    // Replaced by min_source and max_source.
+    unset($this->options['int_range']['use_current_year_min'], $this->options['int_range']['use_current_year_max']);
   }
 
   /**
@@ -355,22 +384,24 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
           '#empty_option' => $this->t('- Any -'),
         ];
       }
-      // The dropdown changes on 1 January when it uses the current year.
-      if (!empty($int_range['use_current_year_min']) || !empty($int_range['use_current_year_max'])) {
-        $form['value']['#cache']['max-age'] = $this->getSecondsUntilNextYear();
-      }
+      $form['value']['#cache'] = $this->getIntRangeCacheability($int_range);
       return;
     }
 
-    $is_date = $this->getFieldType($this->options['start_field']) === 'date';
+    $type = $this->getFieldType($this->options['start_field']);
     foreach (['from' => $from_label, 'to' => $to_label] as $key => $label) {
       $form['value'][$key] = [
         '#type' => 'textfield',
         '#title' => $label,
         '#default_value' => $values[$key] ?? '',
         '#size' => 20,
-        '#placeholder' => $is_date ? 'YYYY-MM-DD' : '',
+        '#placeholder' => $type === 'date' ? 'YYYY-MM-DD' : '',
       ];
+      if ($this->options['widget'] === 'number') {
+        $form['value'][$key]['#type'] = 'number';
+        $form['value'][$key]['#step'] = $type === 'decimal' ? 'any' : 1;
+        $form['value'][$key]['#placeholder'] = $type === 'date' ? 'YYYY' : '';
+      }
     }
   }
 
@@ -586,8 +617,7 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
    * Builds the dropdown options, newest first.
    *
    * @param array $int_range
-   *   The int_range options: min, max, use_current_year_min and
-   *   use_current_year_max.
+   *   The int_range options.
    *
    * @return array
    *   Integers keyed by themselves, e.g. [2024 => 2024, 2023 => 2023, …].
@@ -595,19 +625,187 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
   protected function buildIntRangeOptions(array $int_range): array {
     $bounds = [];
     foreach (['min', 'max'] as $key) {
-      if (!empty($int_range['use_current_year_' . $key])) {
-        $bounds[$key] = $this->getCurrentYear();
-      }
-      elseif (isset($int_range[$key]) && $int_range[$key] !== '') {
+      $bounds[$key] = match ($this->getBoundSource($int_range, $key)) {
+        'current_year' => $this->getCurrentYear(),
+        'index' => $this->getIndexBound($key)['value'],
+        default => NULL,
+      };
+      // Fall back to the fixed value, e.g. when there are no results.
+      if ($bounds[$key] === NULL && isset($int_range[$key]) && $int_range[$key] !== '') {
         $bounds[$key] = (int) $int_range[$key];
       }
-      else {
+      if ($bounds[$key] === NULL) {
         return [];
       }
     }
 
     $values = range(max($bounds), min($bounds));
     return array_combine($values, $values);
+  }
+
+  /**
+   * Returns where a dropdown bound comes from.
+   *
+   * @param array $int_range
+   *   The int_range options.
+   * @param string $key
+   *   Either 'min' or 'max'.
+   *
+   * @return string
+   *   'fixed', 'current_year' or 'index'.
+   */
+  protected function getBoundSource(array $int_range, string $key): string {
+    // Views saved before min_source and max_source existed use a boolean.
+    return $int_range[$key . '_source']
+      ?? (!empty($int_range['use_current_year_' . $key]) ? 'current_year' : 'fixed');
+  }
+
+  /**
+   * Returns the cacheability of the dropdown.
+   *
+   * @param array $int_range
+   *   The int_range options.
+   *
+   * @return array
+   *   A #cache array.
+   */
+  protected function getIntRangeCacheability(array $int_range): array {
+    $cache = ['tags' => [], 'max-age' => Cache::PERMANENT];
+    foreach (['min', 'max'] as $key) {
+      $source = $this->getBoundSource($int_range, $key);
+      if ($source === 'current_year') {
+        // The dropdown changes on 1 January.
+        $cache['max-age'] = $this->getSecondsUntilNextYear();
+      }
+      elseif ($source === 'index') {
+        $cache['tags'] = Cache::mergeTags($cache['tags'], $this->getIndexBound($key)['tags']);
+      }
+    }
+    return $cache;
+  }
+
+  /**
+   * Returns the lowest or highest value of the items this view shows.
+   *
+   * The view is run without its exposed filters and sorts, so the result only
+   * depends on its fixed filters and arguments. It is cached until the index
+   * or the view changes.
+   *
+   * @param string $key
+   *   Either 'min' for the lowest value or 'max' for the highest value.
+   *
+   * @return array{value: int|null, tags: string[]}
+   *   The value (a year on date fields), or NULL when there are no values,
+   *   and the cache tags.
+   */
+  protected function getIndexBound(string $key): array {
+    $language = $this->languageManager->getCurrentLanguage(LanguageInterface::TYPE_CONTENT)->getId();
+    $cid = implode(':', [
+      'search_api_range_filter',
+      $this->view->id(),
+      $this->view->current_display,
+      $this->options['id'],
+      $key,
+      $language,
+      hash('sha256', serialize($this->view->args)),
+    ]);
+    if ($cached = $this->cache->get($cid)) {
+      return $cached->data;
+    }
+    if (static::$lookupRunning) {
+      return ['value' => NULL, 'tags' => []];
+    }
+
+    static::$lookupRunning = TRUE;
+    try {
+      $bound = $this->lookUpIndexBound($key);
+    }
+    finally {
+      static::$lookupRunning = FALSE;
+    }
+    $this->cache->set($cid, $bound, Cache::PERMANENT, $bound['tags']);
+    return $bound;
+  }
+
+  /**
+   * Looks up the lowest or highest value of the items this view shows.
+   *
+   * The lowest value is the lowest start or end value, so records without a
+   * start value count with their end value; the same goes for the highest.
+   *
+   * @param string $key
+   *   Either 'min' or 'max'.
+   *
+   * @return array{value: int|null, tags: string[]}
+   *   The value and the cache tags.
+   */
+  protected function lookUpIndexBound(string $key): array {
+    $type = $this->getFieldType($this->options['start_field']);
+    $fields = array_unique(array_filter([$this->options['start_field'], $this->options['end_field']]));
+    $tags = $this->view->storage->getCacheTags();
+    $values = [];
+
+    foreach ($fields as $field) {
+      $query = $this->buildLookupQuery();
+      if (!$query) {
+        break;
+      }
+      $tags = Cache::mergeTags($tags, $query->getCacheTags());
+      $tags = Cache::mergeTags($tags, ['search_api_list:' . $query->getIndex()->id()]);
+      $query->addCondition($field, NULL, '<>');
+      $sorts = &$query->getSorts();
+      $sorts = [];
+      $query->sort($field, $key === 'min' ? QueryInterface::SORT_ASC : QueryInterface::SORT_DESC);
+      $query->range(0, 1);
+      foreach ($query->execute()->getResultItems() as $item) {
+        foreach ($item->getField($field)?->getValues() ?? [] as $value) {
+          if (is_numeric($value)) {
+            $values[] = $type === 'date' ? (int) gmdate('Y', (int) $value) : $value;
+          }
+        }
+      }
+    }
+
+    if (!$values) {
+      return ['value' => NULL, 'tags' => $tags];
+    }
+    $value = $key === 'min' ? floor(min($values)) : ceil(max($values));
+    return ['value' => (int) $value, 'tags' => $tags];
+  }
+
+  /**
+   * Builds the search query of this view without its exposed filters.
+   *
+   * @return \Drupal\search_api\Query\QueryInterface|null
+   *   The search query, or NULL when the view cannot be built.
+   */
+  protected function buildLookupQuery(): ?QueryInterface {
+    $storage = $this->entityTypeManager->getStorage('view')->loadUnchanged($this->view->id());
+    if (!$storage) {
+      return NULL;
+    }
+    $view = $this->executableFactory->get($storage);
+    if (!$view->setDisplay($this->view->current_display)) {
+      return NULL;
+    }
+    $view->setArguments($this->view->args);
+    $view->setExposedInput([]);
+    $view->initHandlers();
+    foreach ($view->filter as $id => $filter) {
+      if ($filter->isExposed() || $id === $this->options['id']) {
+        unset($view->filter[$id]);
+      }
+    }
+    $view->sort = [];
+    $view->build();
+
+    if (!empty($view->build_info['fail']) || !$view->query instanceof SearchApiQuery || $view->query->shouldAbort()) {
+      return NULL;
+    }
+    $query = $view->query->getSearchApiQuery();
+    // Do not let access checks for the current user end up in the cache.
+    $query->setOption('search_api_access_account', new AnonymousUserSession());
+    return $query;
   }
 
   /**

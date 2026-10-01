@@ -88,13 +88,19 @@ Clone or copy this repository into `web/modules/custom/search_api_range_filter/`
 | Start field | Index field holding the beginning of the range (e.g. `date_start`). |
 | End field | Index field holding the end of the range (e.g. `date_end`). Must have the same type as the start field. Leave empty to filter on a single date or number: records match when that value lies within the range. |
 | Records without an end value | *End at their start value* (default) or *Are still running*. Only used with an end field. |
-| Widget type | `Text field` or `Dropdown (consecutive integer range)`. |
+| Widget type | `Text field`, `Number field` (on date fields: a year) or `Dropdown (consecutive integer range)`. |
 | From / To labels | Customizable labels for the exposed filter inputs. |
-| Min / Max (dropdown) | Value range for the dropdown widget, with optional "use current year" checkboxes. |
+| Minimum / Maximum value (dropdown) | *Fixed value*, *Current year*, or *Lowest/Highest value in the results*. |
 
 The filter is normally exposed. When it is not exposed, the from/to values entered in the filter settings are always applied; when it is exposed, they are the default values. Grouped filters and operators are not supported.
 
-With *Use current year*, the dropdown's cached output expires on 1 January.
+### Dropdown bounds from the results
+
+With *Lowest value in the results* / *Highest value in the results*, the dropdown starts at the lowest start (or end) value and ends at the highest end (or start) value of the items the view shows **without its exposed filters**: fixed filters and contextual filters count, the visitor's input does not. On date fields, this is the year.
+
+The values are looked up with one small search per field and cached until the index is updated or the view is saved. Access checks run as an anonymous user, so unpublished items do not widen the range. When there are no values, the fixed value is used.
+
+With *Current year*, the dropdown's cached output expires on 1 January.
 
 ## Running the tests
 

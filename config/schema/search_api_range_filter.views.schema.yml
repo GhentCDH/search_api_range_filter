@@ -40,9 +40,15 @@ views.filter.search_api_range_filter:
         max:
           type: integer
           label: 'Maximum value'
+        min_source:
+          type: string
+          label: 'Minimum value source: fixed, current_year or index'
+        max_source:
+          type: string
+          label: 'Maximum value source: fixed, current_year or index'
         use_current_year_min:
           type: boolean
-          label: 'Use current year as minimum'
+          label: 'Use current year as minimum (replaced by min_source)'
         use_current_year_max:
           type: boolean
-          label: 'Use current year as maximum'
+          label: 'Use current year as maximum (replaced by max_source)'

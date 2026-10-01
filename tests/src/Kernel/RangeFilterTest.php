@@ -153,6 +153,104 @@ class RangeFilterTest extends KernelTestBase {
   }
 
   /**
+   * Tests the dropdown bounds taken from the results of the view.
+   */
+  public function testIndexBounds(): void {
+    $options = [
+      'widget' => 'select_range',
+      'int_range' => ['min_source' => 'index', 'max_source' => 'index'],
+    ];
+    $this->assertSame([1910, 50], $this->getDropdownBounds($options));
+
+    // Only the fixed (non-exposed) filters of the view count.
+    $fixed_filter = [
+      'id' => 'fixed_range',
+      'table' => 'search_api_index_database_search_index',
+      'field' => 'search_api_range_filter',
+      'plugin_id' => 'search_api_range_filter',
+      'start_field' => 'date_start',
+      'end_field' => 'date_end',
+      'value' => ['from' => '1700', 'to' => '1950'],
+    ];
+    $this->assertSame([1910, 1750], $this->getDropdownBounds($options, $fixed_filter));
+
+    // Integer fields.
+    $options += ['start_field' => 'year_start', 'end_field' => 'year_end'];
+    $this->assertSame([1910, 50], $this->getDropdownBounds($options));
+
+    // Views saved with "Use current year" keep working.
+    $options = [
+      'widget' => 'select_range',
+      'int_range' => ['min' => 1700, 'use_current_year_max' => TRUE],
+    ];
+    $this->assertSame([(int) date('Y'), 1700], $this->getDropdownBounds($options));
+  }
+
+  /**
+   * Tests that the dropdown bounds are cached until the index changes.
+   */
+  public function testIndexBoundsCache(): void {
+    $options = [
+      'widget' => 'select_range',
+      'int_range' => ['min_source' => 'index', 'max_source' => 'index'],
+    ];
+    $this->createView($options);
+    $build = function (): array {
+      $view = Views::getView('range_test');
+      $view->setDisplay('default');
+      $view->initHandlers();
+      $form = [];
+      $view->filter['range']->buildExposedForm($form, new FormState());
+      $values = array_keys($form['date_wrapper']['date']['from']['#options']);
+      return [reset($values), end($values), $form['date_wrapper']['date']['#cache']['tags']];
+    };
+
+    [$max, $min, $tags] = $build();
+    $this->assertSame([1910, 50], [$max, $min]);
+    $this->assertContains('search_api_list:database_search_index', $tags);
+
+    EntityTestMulRevChanged::create([
+      'name' => 'older',
+      'type' => 'item',
+      'date_start' => '0010-01-01',
+    ])->save();
+    $this->assertSame(50, $build()[1]);
+
+    Index::load('database_search_index')->indexItems();
+    $this->assertSame(10, $build()[1]);
+  }
+
+  /**
+   * Tests the number widget.
+   */
+  public function testNumberWidget(): void {
+    $form = $this->buildExposedForm(['widget' => 'number']);
+    $this->assertSame('number', $form['date_wrapper']['date']['from']['#type']);
+    $this->assertSame(1, $form['date_wrapper']['date']['from']['#step']);
+    $this->assertSame(['mid_18th'], $this->search('1752', '1760', ['widget' => 'number']));
+  }
+
+  /**
+   * Returns the first and last option of the dropdown.
+   */
+  protected function getDropdownBounds(array $options, ?array $fixed_filter = NULL): array {
+    $form = $this->buildExposedForm($options, $fixed_filter);
+    $values = array_keys($form['date_wrapper']['date']['from']['#options']);
+    return [reset($values), end($values)];
+  }
+
+  /**
+   * Builds the exposed form element of the range filter.
+   */
+  protected function buildExposedForm(array $options, ?array $fixed_filter = NULL): array {
+    $view = $this->createView($options, $fixed_filter);
+    $view->initHandlers();
+    $form = [];
+    $view->filter['range']->buildExposedForm($form, new FormState());
+    return $form;
+  }
+
+  /**
    * Tests the validation of exposed input.
    */
   public function testValidation(): void {
@@ -190,7 +288,7 @@ class RangeFilterTest extends KernelTestBase {
   /**
    * Creates a view with an exposed range filter.
    */
-  protected function createView(array $options): ViewExecutable {
+  protected function createView(array $options, ?array $fixed_filter = NULL): ViewExecutable {
     View::load('range_test')?->delete();
     View::create([
       'id' => 'range_test',
@@ -213,7 +311,7 @@ class RangeFilterTest extends KernelTestBase {
                 'start_field' => 'date_start',
                 'end_field' => 'date_end',
               ],
-            ],
+            ] + ($fixed_filter ? [$fixed_filter['id'] => $fixed_filter] : []),
           ],
         ],
       ],
