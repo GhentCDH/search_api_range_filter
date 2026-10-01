@@ -139,6 +139,20 @@ class RangeFilterTest extends KernelTestBase {
   }
 
   /**
+   * Tests a single date field compared with the range.
+   */
+  public function testSingleField(): void {
+    foreach (['', 'date_start'] as $end_field) {
+      $options = ['end_field' => $end_field];
+      $this->assertSame(['mid_18th'], $this->search('1750', '1760', $options));
+      $this->assertSame([], $this->search('1751', '1760', $options));
+      // Records without a start value never match.
+      $this->assertSame(['early'], $this->search('', '1700', $options));
+      $this->assertSame(['early_20th', 'no_end'], $this->search('1800', '', $options));
+    }
+  }
+
+  /**
    * Tests the validation of exposed input.
    */
   public function testValidation(): void {

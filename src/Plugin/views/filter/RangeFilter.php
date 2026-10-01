@@ -23,6 +23,9 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  * When records without an end are "still running", they match every "from"
  * value, as long as they have a start.
  *
+ * Without an end field (or with the same field twice), the filter matches
+ * records whose single value lies within the range.
+ *
  * Date values are passed to the backend as UTC timestamps in numeric strings:
  * the Database backend casts them to integers, and Elasticsearch parses them
  * as epoch seconds (a JSON number would be parsed differently).
@@ -142,8 +145,7 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
       '#options' => $field_options,
       '#default_value' => $this->options['end_field'],
       '#empty_option' => $this->t('- Select -'),
-      '#description' => $this->t('Index field that holds the end of the range (e.g. <em>date_end</em>). Must have the same type as the start field.'),
-      '#required' => TRUE,
+      '#description' => $this->t('Index field that holds the end of the range (e.g. <em>date_end</em>). Must have the same type as the start field. Leave empty to filter on a single date or number.'),
     ];
 
     $form['range_config']['empty_end'] = [
@@ -154,6 +156,9 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
         'open' => $this->t('Are still running (match every "from" value)'),
       ],
       '#default_value' => $this->options['empty_end'],
+      '#states' => [
+        'invisible' => [':input[name="options[range_config][end_field]"]' => ['value' => '']],
+      ],
     ];
 
     $form['range_config']['from_label'] = [
@@ -252,10 +257,7 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
     $start = $config['start_field'] ?? '';
     $end = $config['end_field'] ?? '';
 
-    if ($start && $end && $start === $end) {
-      $form_state->setError($form['range_config']['end_field'], $this->t('The start field and end field must be different.'));
-    }
-    elseif ($start && $end && $this->getFieldType($start) !== $this->getFieldType($end)) {
+    if ($start && $end && $this->getFieldType($start) !== $this->getFieldType($end)) {
       $form_state->setError($form['range_config']['end_field'], $this->t('The start field and end field must have the same type.'));
     }
 
@@ -386,12 +388,14 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
    *
    * When records without an end are "still running", the first part becomes
    * OR(end >= from, AND(end IS NULL, start IS NOT NULL)).
+   *
+   * Without an end field, this is simply: start >= from AND start <= to.
    */
   public function query() {
     $query = $this->getQuery();
     $start_field = $this->options['start_field'];
-    $end_field = $this->options['end_field'];
-    if (!$query instanceof SearchApiQuery || !$start_field || !$end_field) {
+    $end_field = $this->options['end_field'] ?: $start_field;
+    if (!$query instanceof SearchApiQuery || !$start_field) {
       return;
     }
 
@@ -402,6 +406,17 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
 
     $overlap = $query->createConditionGroup('AND');
     if (!$overlap) {
+      return;
+    }
+
+    if ($end_field === $start_field) {
+      if ($from !== NULL) {
+        $overlap->addCondition($start_field, $from, '>=');
+      }
+      if ($to !== NULL) {
+        $overlap->addCondition($start_field, $to, '<=');
+      }
+      $query->addConditionGroup($overlap, $this->options['group']);
       return;
     }
 
@@ -439,8 +454,11 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
   public function adminSummary() {
     $start = $this->options['start_field'];
     $end = $this->options['end_field'];
-    if (!$start || !$end) {
+    if (!$start) {
       return $this->t('Not configured');
+    }
+    if (!$end || $end === $start) {
+      return $start;
     }
     return $this->t('@start → @end', ['@start' => $start, '@end' => $end]);
   }

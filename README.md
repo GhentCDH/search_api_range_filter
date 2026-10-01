@@ -86,8 +86,8 @@ Clone or copy this repository into `web/modules/custom/search_api_range_filter/`
 | Option | Description |
 |---|---|
 | Start field | Index field holding the beginning of the range (e.g. `date_start`). |
-| End field | Index field holding the end of the range (e.g. `date_end`). Must have the same type as the start field. |
-| Records without an end value | *End at their start value* (default) or *Are still running*. |
+| End field | Index field holding the end of the range (e.g. `date_end`). Must have the same type as the start field. Leave empty to filter on a single date or number: records match when that value lies within the range. |
+| Records without an end value | *End at their start value* (default) or *Are still running*. Only used with an end field. |
 | Widget type | `Text field` or `Dropdown (consecutive integer range)`. |
 | From / To labels | Customizable labels for the exposed filter inputs. |
 | Min / Max (dropdown) | Value range for the dropdown widget, with optional "use current year" checkboxes. |
