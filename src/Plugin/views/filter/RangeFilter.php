@@ -131,6 +131,17 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
 
   /**
    * {@inheritdoc}
+   *
+   * There is no operator. The parent wraps an empty operator element in a
+   * div; Claro then adds a closing div to the value element and removes the
+   * empty operator, leaving a stray </div> that closes the scroll area of the
+   * Views UI dialog and makes the settings below it unreachable.
+   */
+  public function showOperatorForm(&$form, FormStateInterface $form_state) {
+  }
+
+  /**
+   * {@inheritdoc}
    */
   protected function canBuildGroup() {
     return FALSE;
