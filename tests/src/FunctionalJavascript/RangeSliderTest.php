@@ -175,6 +175,58 @@ class RangeSliderTest extends WebDriverTestBase {
   }
 
   /**
+   * Tests dragging the bar between the handles.
+   */
+  public function testDragInterval(): void {
+    $page = $this->getSession()->getPage();
+    $this->drupalGet('range-slider');
+    $this->assertNotNull($this->assertSession()->waitForElementVisible('css', '.search-api-range-filter-slider .noUi-target'));
+
+    $page->fillField('period[from]', '500');
+    $page->fillField('period[to]', '800');
+    $this->evaluate("document.querySelectorAll('.search-api-range-filter-slider input').forEach((input) => input.dispatchEvent(new Event('change', {bubbles: true})))");
+
+    // The interval moves as a whole, and both fields follow.
+    $this->dragBar(0.1);
+    [$from, $to] = array_map('intval', $this->sliderValues());
+    $this->assertGreaterThan(500, $from);
+    $this->assertSame(300, $to - $from);
+    $this->assertSame([(string) $from, (string) $to], $this->fieldValues());
+
+    // It stops at the bound with the same size; the field there is empty.
+    $this->dragBar(1);
+    $this->assertSame(['1610', '1910'], $this->sliderValues());
+    $this->assertSame(['1610', ''], $this->fieldValues());
+
+    // And back: both handles are off the bounds again.
+    $this->dragBar(-0.1);
+    [$from, $to] = array_map('intval', $this->sliderValues());
+    $this->assertLessThan(1610, $from);
+    $this->assertSame(300, $to - $from);
+    $this->assertSame([(string) $from, (string) $to], $this->fieldValues());
+  }
+
+  /**
+   * Drags the bar between the handles.
+   *
+   * @param float $fraction
+   *   The distance, as a fraction of the width of the slider; negative moves
+   *   to the left.
+   */
+  protected function dragBar(float $fraction): void {
+    $this->getSession()->evaluateScript("(() => {
+      const bar = document.querySelector('.noUi-connect').getBoundingClientRect();
+      const width = document.querySelector('.noUi-target').getBoundingClientRect().width;
+      const start = bar.left + bar.width / 2;
+      const end = start + width * $fraction;
+      const fire = (element, type, clientX) => element.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, buttons: 1, clientX, clientY: bar.top + bar.height / 2}));
+      fire(document.querySelector('.noUi-connect'), 'mousedown', start);
+      fire(document.documentElement, 'mousemove', end);
+      fire(document.documentElement, 'mouseup', end);
+    })()");
+  }
+
+  /**
    * Presses a key on the lower or upper handle of the slider.
    */
   protected function pressKey(string $handle, string $key): void {

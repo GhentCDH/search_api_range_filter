@@ -106,7 +106,7 @@ With *Current year*, the dropdown's cached output expires on 1 January.
 
 ### Slider
 
-The slider is a range slider ([noUiSlider](https://refreshless.com/nouislider/)) between the same bounds as the dropdown, with a handle for "from" and one for "to". It fills in the "from" and "to" number fields, which stay below it: they are the fallback without JavaScript, they move the handles when a value is typed, and they keep the filter working as before (validation, dates, records still running). A handle at the lowest or highest value means no limit on that side, as an empty field does. The handles can be moved with the keyboard (arrow keys, Page Up/Down, Home/End) and are labelled with the "from" and "to" labels.
+The slider is a range slider ([noUiSlider](https://refreshless.com/nouislider/)) between the same bounds as the dropdown, with a handle for "from" and one for "to". It fills in the "from" and "to" number fields, which stay below it: they are the fallback without JavaScript, they move the handles when a value is typed, and they keep the filter working as before (validation, dates, records still running). A handle at the lowest or highest value means no limit on that side, as an empty field does. Dragging the bar between the handles moves the whole interval and keeps its size. The handles can be moved with the keyboard (arrow keys, Page Up/Down, Home/End) and are labelled with the "from" and "to" labels.
 
 Without bounds (e.g. bounds from the results without results and without a fixed value), or when the noUiSlider library is missing, only the number fields are shown; the filter settings then show a warning.
 

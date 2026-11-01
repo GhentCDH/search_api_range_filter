@@ -40,6 +40,8 @@
         window.noUiSlider.create(slider, {
           start: [valueOf(from, 0), valueOf(to, 1)],
           connect: true,
+          // Dragging the bar between the handles moves the whole interval.
+          behaviour: 'tap-drag',
           step: settings.step,
           range: { min: settings.min, max: settings.max },
           tooltips: true,
