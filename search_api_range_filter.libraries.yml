@@ -1,0 +1,25 @@
+# noUiSlider, installed by composer (drupal/nouislider_js) in
+# /libraries/nouislider, as for Better Exposed Filters.
+nouislider:
+  remote: https://refreshless.com/nouislider/
+  version: 15.x
+  license:
+    name: MIT
+    url: https://github.com/leongersen/noUiSlider/blob/master/LICENSE.md
+    gpl-compatible: true
+  js:
+    /libraries/nouislider/nouislider.min.js: { minified: true }
+  css:
+    component:
+      /libraries/nouislider/nouislider.min.css: { minified: true }
+
+slider:
+  js:
+    js/range-slider.js: {}
+  css:
+    component:
+      css/range-slider.css: {}
+  dependencies:
+    - core/drupal
+    - core/once
+    - search_api_range_filter/nouislider

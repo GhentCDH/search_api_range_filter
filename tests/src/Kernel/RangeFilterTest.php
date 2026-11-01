@@ -231,6 +231,52 @@ class RangeFilterTest extends KernelTestBase {
   }
 
   /**
+   * Tests the slider widget: number fields, with the bounds for the slider.
+   */
+  public function testSliderWidget(): void {
+    $options = [
+      'widget' => 'slider',
+      'int_range' => ['min_source' => 'index', 'max_source' => 'index'],
+    ];
+    $element = $this->buildExposedForm($options)['date_wrapper']['date'];
+    $this->assertSame('container', $element['#type']);
+    $this->assertSame(['min' => 50, 'max' => 1910, 'step' => 1], json_decode($element['#attributes']['data-search-api-range-slider'], TRUE));
+    $this->assertContains('search_api_range_filter/slider', $element['#attached']['library']);
+    $this->assertContains('search_api_list:database_search_index', $element['#cache']['tags']);
+    foreach (['from', 'to'] as $key) {
+      $this->assertSame('number', $element[$key]['#type']);
+      $this->assertSame([50, 1910], [$element[$key]['#min'], $element[$key]['#max']]);
+    }
+
+    // The slider fills in the number fields: they filter as usual.
+    $this->assertSame(['mid_18th'], $this->search('1752', '1760', $options));
+    $this->assertSame(['early_20th', 'no_end'], $this->search('1800', '', $options));
+
+    // Fixed bounds.
+    $fixed = [
+      'widget' => 'slider',
+      'int_range' => ['min_source' => 'fixed', 'min' => 1700, 'max_source' => 'fixed', 'max' => 1800],
+    ];
+    $element = $this->buildExposedForm($fixed)['date_wrapper']['date'];
+    $this->assertSame(['min' => 1700, 'max' => 1800, 'step' => 1], json_decode($element['#attributes']['data-search-api-range-slider'], TRUE));
+
+    // Without bounds (no results and no fixed value): only the number fields.
+    $no_results = [
+      'id' => 'fixed_range',
+      'table' => 'search_api_index_database_search_index',
+      'field' => 'search_api_range_filter',
+      'plugin_id' => 'search_api_range_filter',
+      'start_field' => 'date_start',
+      'end_field' => 'date_end',
+      'value' => ['from' => '3000', 'to' => '4000'],
+    ];
+    $element = $this->buildExposedForm($options, $no_results)['date_wrapper']['date'];
+    $this->assertArrayNotHasKey('#attributes', $element);
+    $this->assertArrayNotHasKey('#attached', $element);
+    $this->assertSame('number', $element['from']['#type']);
+  }
+
+  /**
    * Returns the first and last option of the dropdown.
    */
   protected function getDropdownBounds(array $options, ?array $fixed_filter = NULL): array {

@@ -1,0 +1,13 @@
+/**
+ * @file
+ * The slider widget of the range filter.
+ */
+
+/* Room for the tooltips above the handles. */
+.search-api-range-filter-slider__slider {
+  margin: 2.5rem 0.75rem 1rem;
+}
+
+.search-api-range-filter-slider--enhanced {
+  max-width: 32rem;
+}

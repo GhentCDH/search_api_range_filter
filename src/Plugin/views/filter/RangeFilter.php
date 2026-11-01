@@ -224,12 +224,30 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
         'textfield' => $this->t('Text field (on date fields: YYYY, YYYY-MM or YYYY-MM-DD)'),
         'number' => $this->t('Number field (on date fields: a year)'),
         'select_range' => $this->t('Dropdown (consecutive integer range)'),
+        'slider' => $this->t('Slider (consecutive integer range; without JavaScript: number fields)'),
       ],
       '#default_value' => $this->options['widget'],
-      '#description' => $this->t('Input widget shown to end users. Use <em>Dropdown</em> or <em>Number field</em> for year ranges.'),
+      '#description' => $this->t('Input widget shown to end users. Use <em>Dropdown</em>, <em>Slider</em> or <em>Number field</em> for year ranges.'),
     ];
 
+    if (!static::sliderLibraryExists()) {
+      $form['range_config']['slider_missing'] = [
+        '#type' => 'container',
+        '#states' => ['visible' => [':input[name="options[range_config][widget]"]' => ['value' => 'slider']]],
+        'message' => [
+          '#markup' => '<p class="messages messages--warning">' . $this->t('The noUiSlider library is missing (/libraries/nouislider), so the slider shows number fields. Install it with <code>composer require drupal/nouislider_js</code>.') . '</p>',
+        ],
+      ];
+    }
+
     $this->buildIntRangeSubForm($form['range_config'], $this->options['int_range']);
+  }
+
+  /**
+   * Whether the noUiSlider library of the slider widget is installed.
+   */
+  public static function sliderLibraryExists(): bool {
+    return file_exists(DRUPAL_ROOT . '/libraries/nouislider/nouislider.min.js');
   }
 
   /**
@@ -242,9 +260,11 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
    */
   protected function buildIntRangeSubForm(array &$parent, array $saved): void {
     $widget = ':input[name="options[range_config][widget]"]';
+    // The dropdown and the slider show a range between two bounds.
+    $ranged = [[$widget => ['value' => 'select_range']], 'or', [$widget => ['value' => 'slider']]];
     $parent['int_range'] = [
       '#type' => 'container',
-      '#states' => ['visible' => [$widget => ['value' => 'select_range']]],
+      '#states' => ['visible' => $ranged],
     ];
 
     $labels = [
@@ -259,7 +279,11 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
     ];
     foreach ($labels as $key => $label) {
       $source = ':input[name="options[range_config][int_range][' . $key . '_source]"]';
-      $fixed = [$widget => ['value' => 'select_range'], $source => ['value' => 'fixed']];
+      $fixed = [
+        [$widget => ['value' => 'select_range'], $source => ['value' => 'fixed']],
+        'or',
+        [$widget => ['value' => 'slider'], $source => ['value' => 'fixed']],
+      ];
 
       $parent['int_range'][$key . '_source'] = [
         '#type' => 'radios',
@@ -299,11 +323,11 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
       $form_state->setError($form['range_config']['end_field'], $this->t('The start field and end field must have the same type.'));
     }
 
-    if (($config['widget'] ?? '') === 'select_range') {
+    if (in_array($config['widget'] ?? '', ['select_range', 'slider'], TRUE)) {
       $int_range = $config['int_range'] ?? [];
       foreach (['min' => $this->t('minimum'), 'max' => $this->t('maximum')] as $key => $label) {
         if ($this->getBoundSource($int_range, $key) === 'fixed' && ($int_range[$key] ?? '') === '') {
-          $form_state->setError($form['range_config']['int_range'][$key], $this->t('A @label value is required for the dropdown.', ['@label' => $label]));
+          $form_state->setError($form['range_config']['int_range'][$key], $this->t('A @label value is required for the dropdown or the slider.', ['@label' => $label]));
         }
       }
     }
@@ -408,10 +432,33 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
         '#size' => 20,
         '#placeholder' => $type === 'date' ? 'YYYY-MM-DD' : '',
       ];
-      if ($this->options['widget'] === 'number') {
+      if (in_array($this->options['widget'], ['number', 'slider'], TRUE)) {
         $form['value'][$key]['#type'] = 'number';
         $form['value'][$key]['#step'] = $type === 'decimal' ? 'any' : 1;
         $form['value'][$key]['#placeholder'] = $type === 'date' ? 'YYYY' : '';
+      }
+    }
+
+    // The slider: the number fields are its fallback without JavaScript, and
+    // without bounds (e.g. no results and no fixed value).
+    if ($this->options['widget'] === 'slider') {
+      $int_range = $this->options['int_range'] ?? [];
+      $form['value']['#cache'] = $this->getIntRangeCacheability($int_range);
+      $bounds = $this->getIntRangeBounds($int_range);
+      if ($bounds && $bounds['min'] < $bounds['max'] && static::sliderLibraryExists()) {
+        // A wrapper for the attributes; the values stay under "value".
+        $form['value']['#type'] = 'container';
+        $form['value']['#attributes']['class'][] = 'search-api-range-filter-slider';
+        $form['value']['#attributes']['data-search-api-range-slider'] = json_encode([
+          'min' => $bounds['min'],
+          'max' => $bounds['max'],
+          'step' => 1,
+        ]);
+        $form['value']['#attached']['library'][] = 'search_api_range_filter/slider';
+        foreach (['from', 'to'] as $key) {
+          $form['value'][$key]['#min'] = $bounds['min'];
+          $form['value'][$key]['#max'] = $bounds['max'];
+        }
       }
     }
   }
@@ -634,6 +681,25 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
    *   Integers keyed by themselves, e.g. [2024 => 2024, 2023 => 2023, …].
    */
   protected function buildIntRangeOptions(array $int_range): array {
+    $bounds = $this->getIntRangeBounds($int_range);
+    if (!$bounds) {
+      return [];
+    }
+    $values = range($bounds['max'], $bounds['min']);
+    return array_combine($values, $values);
+  }
+
+  /**
+   * Returns the lowest and highest value of the dropdown or the slider.
+   *
+   * @param array $int_range
+   *   The int_range options.
+   *
+   * @return array{min: int, max: int}|null
+   *   The bounds, or NULL when one is unknown, e.g. a bound from the results
+   *   without results and without a fixed value to fall back to.
+   */
+  protected function getIntRangeBounds(array $int_range): ?array {
     $bounds = [];
     foreach (['min', 'max'] as $key) {
       $bounds[$key] = match ($this->getBoundSource($int_range, $key)) {
@@ -646,12 +712,10 @@ class RangeFilter extends FilterPluginBase implements ContainerFactoryPluginInte
         $bounds[$key] = (int) $int_range[$key];
       }
       if ($bounds[$key] === NULL) {
-        return [];
+        return NULL;
       }
     }
-
-    $values = range(max($bounds), min($bounds));
-    return array_combine($values, $values);
+    return ['min' => min($bounds), 'max' => max($bounds)];
   }
 
   /**

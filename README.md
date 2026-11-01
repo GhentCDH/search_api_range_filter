@@ -13,6 +13,7 @@ Provides a Views filter (`@ViewsFilter("search_api_range_filter")`) that matches
 ```
 src/Plugin/views/filter/RangeFilter.php   — the Views filter plugin
 search_api_range_filter.views.inc         — Views data integration
+js/range-slider.js, css/range-slider.css  — the slider widget (noUiSlider)
 config/schema/                            — Views config schema for export
 ```
 
@@ -41,6 +42,7 @@ On `date` index fields, both widgets accept a year (`YYYY`); the text field also
 - Drupal 10 or higher
 - `drupal:views` module
 - `search_api:search_api` module
+- [`drupal/nouislider_js`](https://www.drupal.org/project/nouislider_js): the noUiSlider library for the slider widget, installed by Composer in `/libraries/nouislider` (the same files as Better Exposed Filters). It is only loaded on pages with a slider.
 
 ### Optional
 
@@ -88,9 +90,9 @@ Clone or copy this repository into `web/modules/custom/search_api_range_filter/`
 | Start field | Index field holding the beginning of the range (e.g. `date_start`). |
 | End field | Index field holding the end of the range (e.g. `date_end`). Must have the same type as the start field. Leave empty to filter on a single date or number: records match when that value lies within the range. |
 | Records without an end value | *End at their start value* (default) or *Are still running*. Only used with an end field. |
-| Widget type | `Text field`, `Number field` (on date fields: a year) or `Dropdown (consecutive integer range)`. |
+| Widget type | `Text field`, `Number field` (on date fields: a year), `Dropdown (consecutive integer range)` or `Slider` (see below). |
 | From / To labels | Customizable labels for the exposed filter inputs. |
-| Minimum / Maximum value (dropdown) | *Fixed value*, *Current year*, or *Lowest/Highest value in the results*. |
+| Minimum / Maximum value (dropdown, slider) | *Fixed value*, *Current year*, or *Lowest/Highest value in the results*. |
 
 The filter is normally exposed. When it is not exposed, the from/to values entered in the filter settings are always applied; when it is exposed, they are the default values. Grouped filters and operators are not supported.
 
@@ -102,9 +104,15 @@ The values are looked up with one small search per field and cached until the in
 
 With *Current year*, the dropdown's cached output expires on 1 January.
 
+### Slider
+
+The slider is a range slider ([noUiSlider](https://refreshless.com/nouislider/)) between the same bounds as the dropdown, with a handle for "from" and one for "to". It fills in the "from" and "to" number fields, which stay below it: they are the fallback without JavaScript, they move the handles when a value is typed, and they keep the filter working as before (validation, dates, records still running). A handle at the lowest or highest value means no limit on that side, as an empty field does. The handles can be moved with the keyboard (arrow keys, Page Up/Down, Home/End) and are labelled with the "from" and "to" labels.
+
+Without bounds (e.g. bounds from the results without results and without a fixed value), or when the noUiSlider library is missing, only the number fields are shown; the filter settings then show a warning.
+
 ## Running the tests
 
-The kernel tests use the Search API Database backend and need `drupal/search_api` installed:
+The kernel tests use the Search API Database backend and need `drupal/search_api` installed; the browser test of the slider (`tests/src/FunctionalJavascript`) also needs `drupal/nouislider_js` and a WebDriver:
 
 ```bash
 cd web
